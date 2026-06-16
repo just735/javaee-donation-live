@@ -14,7 +14,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -202,9 +202,22 @@ public class BalanceReconciliationService {
     }
 
     private List<String> listAllStreamerIds() {
+        // 从余额表取
         List<StreamerBalance> balances = balanceMapper.selectList(
                 new LambdaQueryWrapper<StreamerBalance>().select(StreamerBalance::getStreamerId));
-        return balances.stream().map(StreamerBalance::getStreamerId).collect(Collectors.toList());
+        List<String> ids = new ArrayList<>(balances.stream()
+                .map(StreamerBalance::getStreamerId).collect(Collectors.toList()));
+
+        // 合并打赏明细中存在但余额缺失的主播（防止余额行缺失漏检）
+        List<RewardEvent> events = rewardEventMapper.selectList(
+                new LambdaQueryWrapper<RewardEvent>().select(RewardEvent::getStreamerId).groupBy(RewardEvent::getStreamerId));
+        Set<String> eventIds = events.stream().map(RewardEvent::getStreamerId).collect(Collectors.toSet());
+        for (String id : eventIds) {
+            if (!ids.contains(id)) {
+                ids.add(id);
+            }
+        }
+        return ids;
     }
 
     private BigDecimal safe(BigDecimal value) {

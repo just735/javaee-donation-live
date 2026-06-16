@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -79,7 +80,20 @@ public class FinanceSettlementService {
         event.setSettleStatus("SETTLED");
         event.setCreatedAt(LocalDateTime.now());
         event.setUpdatedAt(LocalDateTime.now());
-        rewardEventMapper.insert(event);
+        try {
+            rewardEventMapper.insert(event);
+        } catch (DuplicateKeyException e) {
+            // 并发场景下唯一键冲突：回查已插入的记录，返回幂等结果
+            RewardEvent existing2 = rewardEventMapper.selectOne(queryWrapper);
+            log.info("[{}] concurrent duplicate caught by unique key, rewardNo={}", traceId, request.getRewardNo());
+            return RewardSettleResponse.builder()
+                    .rewardNo(request.getRewardNo())
+                    .settleStatus("DUPLICATE")
+                    .streamerId(existing2.getStreamerId())
+                    .rewardAmount(existing2.getRewardAmount())
+                    .settledAt(existing2.getCreatedAt())
+                    .build();
+        }
         log.info("[{}] reward event inserted, id={}", traceId, event.getId());
 
         // 3. 查当前生效的提成规则
