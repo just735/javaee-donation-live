@@ -1,76 +1,296 @@
 package com.javaee.donation.finance.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.javaee.donation.common.context.TraceContext;
 import com.javaee.donation.common.model.CommissionRuleRequest;
 import com.javaee.donation.common.model.RewardRequest;
 import com.javaee.donation.common.model.StreamerBalanceResponse;
+import com.javaee.donation.finance.dto.CommissionRuleResponse;
+import com.javaee.donation.finance.dto.RewardSettleResponse;
+import com.javaee.donation.finance.entity.RewardEvent;
+import com.javaee.donation.finance.entity.StreamerBalance;
+import com.javaee.donation.finance.entity.StreamerCommissionRule;
+import com.javaee.donation.finance.mapper.RewardEventMapper;
+import com.javaee.donation.finance.mapper.StreamerBalanceMapper;
+import com.javaee.donation.finance.mapper.StreamerCommissionRuleMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class FinanceSettlementService {
 
-    private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("0.30");
+    private static final Logger log = LoggerFactory.getLogger(FinanceSettlementService.class);
+    private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("0.3000");
 
-    private final Map<String, RewardRequest> settledRewards = new ConcurrentHashMap<>();
-    private final Map<String, List<CommissionRuleRequest>> commissionRules = new ConcurrentHashMap<>();
-    private final Map<String, StreamerBalanceResponse> balances = new ConcurrentHashMap<>();
+    private final RewardEventMapper rewardEventMapper;
+    private final StreamerCommissionRuleMapper commissionRuleMapper;
+    private final StreamerBalanceMapper balanceMapper;
 
-    public String settle(RewardRequest request) {
-        RewardRequest existing = settledRewards.putIfAbsent(request.getRewardNo(), request);
-        if (existing != null) {
-            return "duplicate reward ignored";
-        }
-
-        BigDecimal rewardAmount = defaultAmount(request.getRewardAmount());
-        BigDecimal commissionRate = resolveCommissionRate(request.getStreamerId(), parseTime(request.getRewardTime()));
-        BigDecimal commissionAmount = rewardAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal withdrawableAmount = rewardAmount.subtract(commissionAmount).setScale(2, RoundingMode.HALF_UP);
-
-        balances.compute(request.getStreamerId(), (streamerId, current) -> {
-            StreamerBalanceResponse balance = current == null
-                    ? new StreamerBalanceResponse(streamerId, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO)
-                    : current;
-            balance.setTotalRewardAmount(balance.getTotalRewardAmount().add(rewardAmount));
-            balance.setTotalCommissionAmount(balance.getTotalCommissionAmount().add(commissionAmount));
-            balance.setWithdrawableAmount(balance.getWithdrawableAmount().add(withdrawableAmount));
-            return balance;
-        });
-        return "reward settled";
+    public FinanceSettlementService(RewardEventMapper rewardEventMapper,
+                                    StreamerCommissionRuleMapper commissionRuleMapper,
+                                    StreamerBalanceMapper balanceMapper) {
+        this.rewardEventMapper = rewardEventMapper;
+        this.commissionRuleMapper = commissionRuleMapper;
+        this.balanceMapper = balanceMapper;
     }
 
-    public String saveCommissionRule(CommissionRuleRequest request) {
-        commissionRules.computeIfAbsent(request.getStreamerId(), key -> new ArrayList<>()).add(request);
-        commissionRules.get(request.getStreamerId()).sort(Comparator.comparing(rule -> parseTime(rule.getEffectiveFrom())));
-        return "rule accepted";
+    @Transactional(rollbackFor = Exception.class)
+    public RewardSettleResponse settle(RewardRequest request) {
+        String traceId = TraceContext.getTraceId();
+        log.info("[{}] settle reward start, rewardNo={}, streamerId={}, amount={}",
+                traceId, request.getRewardNo(), request.getStreamerId(), request.getRewardAmount());
+
+        // 1. 幂等检查：利用唯一索引 uk_reward_no，INSERT重复会拋异常，外层捕获后返回重复状态
+        // 先查是否已存在
+        LambdaQueryWrapper<RewardEvent> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(RewardEvent::getRewardNo, request.getRewardNo());
+        RewardEvent existing = rewardEventMapper.selectOne(queryWrapper);
+        if (existing != null) {
+            log.info("[{}] duplicate reward ignored, rewardNo={}", traceId, request.getRewardNo());
+            return RewardSettleResponse.builder()
+                    .rewardNo(request.getRewardNo())
+                    .settleStatus("DUPLICATE")
+                    .streamerId(existing.getStreamerId())
+                    .rewardAmount(existing.getRewardAmount())
+                    .settledAt(existing.getCreatedAt())
+                    .build();
+        }
+
+        // 2. 落打赏明细
+        LocalDateTime rewardTime = parseTime(request.getRewardTime());
+        RewardEvent event = new RewardEvent();
+        event.setRewardNo(request.getRewardNo());
+        event.setTraceId(traceId);
+        event.setViewerId(request.getViewerId());
+        event.setViewerName(request.getViewerName());
+        event.setViewerGender(request.getViewerGender());
+        event.setStreamerId(request.getStreamerId());
+        event.setStreamerName(request.getStreamerName());
+        event.setRewardAmount(safeAmount(request.getRewardAmount()));
+        event.setRewardTime(rewardTime);
+        event.setSettleStatus("SETTLED");
+        event.setCreatedAt(LocalDateTime.now());
+        event.setUpdatedAt(LocalDateTime.now());
+        rewardEventMapper.insert(event);
+        log.info("[{}] reward event inserted, id={}", traceId, event.getId());
+
+        // 3. 查当前生效的提成规则
+        BigDecimal commissionRate = resolveCommissionRate(request.getStreamerId(), rewardTime);
+
+        // 4. 计算提成和可领取
+        BigDecimal rewardAmount = safeAmount(request.getRewardAmount());
+        BigDecimal commissionAmount = rewardAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal withdrawableIncrement = rewardAmount.subtract(commissionAmount);
+
+        // 5. 更新主播余额（乐观锁），带重试
+        updateStreamerBalance(request.getStreamerId(), rewardAmount, commissionAmount, withdrawableIncrement);
+
+        log.info("[{}] settle reward success, rewardNo={}, commissionRate={}, commission={}, withdrawable={}",
+                traceId, request.getRewardNo(), commissionRate, commissionAmount, withdrawableIncrement);
+
+        return RewardSettleResponse.builder()
+                .rewardNo(request.getRewardNo())
+                .settleStatus("SETTLED")
+                .streamerId(request.getStreamerId())
+                .rewardAmount(rewardAmount)
+                .commissionRate(commissionRate)
+                .commissionAmount(commissionAmount)
+                .withdrawableAmount(withdrawableIncrement)
+                .settledAt(event.getCreatedAt())
+                .build();
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public CommissionRuleResponse saveCommissionRule(CommissionRuleRequest request) {
+        String traceId = TraceContext.getTraceId();
+        log.info("[{}] save commission rule, streamerId={}, rate={}, from={}",
+                traceId, request.getStreamerId(), request.getCommissionRate(), request.getEffectiveFrom());
+
+        LocalDateTime effectiveFrom = parseTime(request.getEffectiveFrom());
+        BigDecimal rate = safeAmount(request.getCommissionRate());
+
+        // 关闭上一个规则：将当前主播最新的未关闭规则的effective_to设为新规则的生效时间
+        closePreviousRule(request.getStreamerId(), effectiveFrom);
+
+        // 插入新规则
+        StreamerCommissionRule rule = new StreamerCommissionRule();
+        rule.setStreamerId(request.getStreamerId());
+        rule.setCommissionRate(rate);
+        rule.setEffectiveFrom(effectiveFrom);
+        rule.setEffectiveTo(request.getEffectiveTo() != null && !request.getEffectiveTo().isBlank()
+                ? parseTime(request.getEffectiveTo()) : null);
+        rule.setCreatedAt(LocalDateTime.now());
+        rule.setUpdatedAt(LocalDateTime.now());
+        commissionRuleMapper.insert(rule);
+
+        log.info("[{}] commission rule created, id={}", traceId, rule.getId());
+
+        return CommissionRuleResponse.builder()
+                .id(rule.getId())
+                .streamerId(rule.getStreamerId())
+                .commissionRate(rule.getCommissionRate())
+                .effectiveFrom(rule.getEffectiveFrom())
+                .effectiveTo(rule.getEffectiveTo())
+                .createdAt(rule.getCreatedAt())
+                .build();
+    }
+
+    /**
+     * 余额扣减（带乐观锁，最多重试3次），用于主播提现
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public StreamerBalanceResponse deductBalance(String streamerId, BigDecimal deductAmount) {
+        String traceId = TraceContext.getTraceId();
+        BigDecimal amount = safeAmount(deductAmount);
+        log.info("[{}] deduct balance, streamerId={}, amount={}", traceId, streamerId, amount);
+
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("deduct amount must be positive");
+        }
+
+        int maxRetries = 3;
+        for (int i = 0; i < maxRetries; i++) {
+            StreamerBalance balance = ensureBalance(streamerId);
+            BigDecimal currentWithdrawable = safeAmount(balance.getWithdrawableAmount());
+
+            if (currentWithdrawable.compareTo(amount) < 0) {
+                throw new IllegalArgumentException("insufficient balance: withdrawable="
+                        + currentWithdrawable + ", deduct=" + amount);
+            }
+
+            Long currentVersion = balance.getVersion();
+            BigDecimal newWithdrawable = currentWithdrawable.subtract(amount);
+
+            LambdaUpdateWrapper<StreamerBalance> updateWrapper = new LambdaUpdateWrapper<>();
+            updateWrapper.eq(StreamerBalance::getStreamerId, streamerId)
+                    .eq(StreamerBalance::getVersion, currentVersion)
+                    .set(StreamerBalance::getWithdrawableAmount, newWithdrawable)
+                    .set(StreamerBalance::getVersion, currentVersion + 1)
+                    .set(StreamerBalance::getUpdatedAt, LocalDateTime.now());
+
+            int updated = balanceMapper.update(null, updateWrapper);
+            if (updated > 0) {
+                log.info("[{}] deduct success, streamerId={}, before={}, after={}",
+                        traceId, streamerId, currentWithdrawable, newWithdrawable);
+                return new StreamerBalanceResponse(streamerId,
+                        safeAmount(balance.getTotalRewardAmount()),
+                        safeAmount(balance.getTotalCommissionAmount()),
+                        newWithdrawable);
+            }
+            log.warn("[{}] deduct optimistic lock retry {}/{} for streamerId={}",
+                    traceId, i + 1, maxRetries, streamerId);
+        }
+        throw new RuntimeException("deduct balance failed after " + maxRetries + " retries");
     }
 
     public StreamerBalanceResponse getBalance(String streamerId) {
-        return balances.getOrDefault(streamerId,
-                new StreamerBalanceResponse(streamerId, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        String traceId = TraceContext.getTraceId();
+        log.info("[{}] query balance, streamerId={}", traceId, streamerId);
+
+        StreamerBalance balance = ensureBalance(streamerId);
+        return new StreamerBalanceResponse(
+                balance.getStreamerId(),
+                balance.getTotalRewardAmount() != null ? balance.getTotalRewardAmount() : BigDecimal.ZERO,
+                balance.getTotalCommissionAmount() != null ? balance.getTotalCommissionAmount() : BigDecimal.ZERO,
+                balance.getWithdrawableAmount() != null ? balance.getWithdrawableAmount() : BigDecimal.ZERO
+        );
     }
 
+    // ---- 私有方法 ----
+
+    /**
+     * 按打赏时间匹配当前生效的提成规则（不涉及事务、纯读）
+     */
     private BigDecimal resolveCommissionRate(String streamerId, LocalDateTime rewardTime) {
-        List<CommissionRuleRequest> rules = commissionRules.get(streamerId);
-        if (rules == null || rules.isEmpty()) {
+        LambdaQueryWrapper<StreamerCommissionRule> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(StreamerCommissionRule::getStreamerId, streamerId)
+                .le(StreamerCommissionRule::getEffectiveFrom, rewardTime)
+                .and(w -> w.isNull(StreamerCommissionRule::getEffectiveTo)
+                        .or().gt(StreamerCommissionRule::getEffectiveTo, rewardTime))
+                .orderByDesc(StreamerCommissionRule::getEffectiveFrom)
+                .last("LIMIT 1");
+        StreamerCommissionRule rule = commissionRuleMapper.selectOne(wrapper);
+        if (rule == null) {
             return DEFAULT_COMMISSION_RATE;
         }
-        for (CommissionRuleRequest rule : rules) {
-            LocalDateTime effectiveFrom = parseTime(rule.getEffectiveFrom());
-            LocalDateTime effectiveTo = parseNullableTime(rule.getEffectiveTo());
-            boolean matchesFrom = !rewardTime.isBefore(effectiveFrom);
-            boolean matchesTo = effectiveTo == null || rewardTime.isBefore(effectiveTo);
-            if (matchesFrom && matchesTo) {
-                return defaultAmount(rule.getCommissionRate());
+        return rule.getCommissionRate();
+    }
+
+    /**
+     * 更新主播余额，带乐观锁重试（最多3次）
+     */
+    private void updateStreamerBalance(String streamerId, BigDecimal rewardAmount,
+                                        BigDecimal commissionAmount, BigDecimal withdrawableIncrement) {
+        int maxRetries = 3;
+        for (int i = 0; i < maxRetries; i++) {
+            StreamerBalance balance = ensureBalance(streamerId);
+            Long currentVersion = balance.getVersion();
+
+            LambdaUpdateWrapper<StreamerBalance> updateWrapper = new LambdaUpdateWrapper<>();
+            updateWrapper.eq(StreamerBalance::getStreamerId, streamerId)
+                    .eq(StreamerBalance::getVersion, currentVersion)
+                    .setSql("total_reward_amount = total_reward_amount + " + rewardAmount)
+                    .setSql("total_commission_amount = total_commission_amount + " + commissionAmount)
+                    .setSql("withdrawable_amount = withdrawable_amount + " + withdrawableIncrement)
+                    .set(StreamerBalance::getVersion, currentVersion + 1)
+                    .set(StreamerBalance::getUpdatedAt, LocalDateTime.now());
+
+            int updated = balanceMapper.update(null, updateWrapper);
+            if (updated > 0) {
+                return;
             }
+            log.warn("[{}] optimistic lock retry {}/{} for streamerId={}",
+                    TraceContext.getTraceId(), i + 1, maxRetries, streamerId);
         }
-        return DEFAULT_COMMISSION_RATE;
+        throw new RuntimeException("update streamer balance failed after " + maxRetries + " retries, streamerId=" + streamerId);
+    }
+
+    /**
+     * 查询余额，不存在则创建
+     */
+    private StreamerBalance ensureBalance(String streamerId) {
+        LambdaQueryWrapper<StreamerBalance> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(StreamerBalance::getStreamerId, streamerId);
+        StreamerBalance balance = balanceMapper.selectOne(wrapper);
+        if (balance == null) {
+            balance = new StreamerBalance();
+            balance.setStreamerId(streamerId);
+            balance.setTotalRewardAmount(BigDecimal.ZERO);
+            balance.setTotalCommissionAmount(BigDecimal.ZERO);
+            balance.setWithdrawableAmount(BigDecimal.ZERO);
+            balance.setVersion(0L);
+            balance.setCreatedAt(LocalDateTime.now());
+            balance.setUpdatedAt(LocalDateTime.now());
+            balanceMapper.insert(balance);
+        }
+        return balance;
+    }
+
+    /**
+     * 关闭前一条未关闭的规则：将其 effective_to 设为新规则的生效时间
+     */
+    private void closePreviousRule(String streamerId, LocalDateTime effectiveFrom) {
+        LambdaQueryWrapper<StreamerCommissionRule> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(StreamerCommissionRule::getStreamerId, streamerId)
+                .isNull(StreamerCommissionRule::getEffectiveTo)
+                .orderByDesc(StreamerCommissionRule::getEffectiveFrom)
+                .last("LIMIT 1");
+        StreamerCommissionRule previous = commissionRuleMapper.selectOne(wrapper);
+        if (previous != null) {
+            previous.setEffectiveTo(effectiveFrom);
+            previous.setUpdatedAt(LocalDateTime.now());
+            commissionRuleMapper.updateById(previous);
+            log.info("[{}] closed previous rule id={}, effectiveTo={}",
+                    TraceContext.getTraceId(), previous.getId(), effectiveFrom);
+        }
     }
 
     private LocalDateTime parseTime(String value) {
@@ -80,14 +300,7 @@ public class FinanceSettlementService {
         return LocalDateTime.parse(value);
     }
 
-    private LocalDateTime parseNullableTime(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return LocalDateTime.parse(value);
-    }
-
-    private BigDecimal defaultAmount(BigDecimal amount) {
+    private BigDecimal safeAmount(BigDecimal amount) {
         return amount == null ? BigDecimal.ZERO : amount;
     }
 }
