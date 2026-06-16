@@ -13,4 +13,11 @@ public class TopViewerResponse {
     private String viewerId;
     private String viewerName;
     private BigDecimal totalRewardAmount;
+    private Long rewardCount;
+
+    public TopViewerResponse(String viewerId, String viewerName, BigDecimal totalRewardAmount) {
+        this.viewerId = viewerId;
+        this.viewerName = viewerName;
+        this.totalRewardAmount = totalRewardAmount;
+    }
 }
