@@ -1,5 +1,6 @@
 package com.javaee.donation.analytics.controller;
 
+import com.javaee.donation.analytics.dto.AnalyticsRebuildResponse;
 import com.javaee.donation.analytics.service.AnalyticsService;
 import com.javaee.donation.common.api.ApiResponse;
 import com.javaee.donation.common.context.TraceContext;
@@ -45,7 +46,7 @@ public class AnalyticsController {
     }
 
     @PostMapping("/jobs/rebuild")
-    public ApiResponse<String> rebuild() {
+    public ApiResponse<AnalyticsRebuildResponse> rebuild() {
         return ApiResponse.success(TraceContext.getTraceId(), analyticsService.rebuild());
     }
 }
