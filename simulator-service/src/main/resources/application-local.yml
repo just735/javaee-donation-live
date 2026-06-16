@@ -1,0 +1,14 @@
+spring:
+  cloud:
+    consul:
+      host: 127.0.0.1
+      port: 8500
+      discovery:
+        prefer-ip-address: true
+clients:
+  viewer-service: http://127.0.0.1:8081
+simulator:
+  default-qps: 500
+logging:
+  level:
+    root: INFO

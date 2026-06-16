@@ -1,0 +1,23 @@
+spring:
+  cloud:
+    consul:
+      host: 127.0.0.1
+      port: 8500
+      discovery:
+        prefer-ip-address: true
+  resilience4j:
+    circuitbreaker:
+      instances:
+        analyticsProfile:
+          sliding-window-size: 20
+          failure-rate-threshold: 50
+    timelimiter:
+      instances:
+        analyticsProfile:
+          timeout-duration: 2s
+clients:
+  finance-service: http://127.0.0.1:8082
+  analytics-service: http://127.0.0.1:8083
+logging:
+  level:
+    root: INFO
