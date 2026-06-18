@@ -1,5 +1,7 @@
 package com.javaee.donation.viewer.service;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.javaee.donation.common.api.ApiResponse;
 import com.javaee.donation.common.context.TraceContext;
 import com.javaee.donation.common.model.RewardRequest;
@@ -11,9 +13,6 @@ import com.javaee.donation.viewer.dto.TopViewersFetchResult;
 import com.javaee.donation.viewer.dto.TopViewersQueryResult;
 import com.javaee.donation.viewer.dto.ViewerRewardResponse;
 import com.javaee.donation.viewer.exception.ViewerBusinessException;
-import io.github.resilience4j.ratelimiter.RateLimiter;
-import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
-import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,22 +28,20 @@ public class ViewerRewardService {
     private final TopViewerCacheService topViewerCacheService;
     private final RewardRequestValidator rewardRequestValidator;
     private final RewardNotificationService rewardNotificationService;
-    private final RateLimiter rewardRateLimiter;
 
     public ViewerRewardService(FinanceGateway financeGateway,
                                AnalyticsGateway analyticsGateway,
                                TopViewerCacheService topViewerCacheService,
                                RewardRequestValidator rewardRequestValidator,
-                               RewardNotificationService rewardNotificationService,
-                               RateLimiterRegistry rateLimiterRegistry) {
+                               RewardNotificationService rewardNotificationService) {
         this.financeGateway = financeGateway;
         this.analyticsGateway = analyticsGateway;
         this.topViewerCacheService = topViewerCacheService;
         this.rewardRequestValidator = rewardRequestValidator;
         this.rewardNotificationService = rewardNotificationService;
-        this.rewardRateLimiter = rateLimiterRegistry.rateLimiter("viewerReward");
     }
 
+    @SentinelResource(value = "viewerReward", blockHandler = "rewardBlockHandler")
     public ViewerRewardResponse reward(RewardRequest request) {
         String traceId = TraceContext.getTraceId();
         rewardRequestValidator.validate(request);
@@ -52,14 +49,16 @@ public class ViewerRewardService {
                 traceId, ViewerConstants.SERVICE_NAME,
                 request.getRewardNo(), request.getViewerId(),
                 request.getStreamerId(), request.getRewardAmount());
+        return settleReward(request);
+    }
 
-        try {
-            return rewardRateLimiter.executeSupplier(() -> settleReward(request));
-        } catch (RequestNotPermitted exception) {
-            log.warn("[{}][{}] reward rate limited, rewardNo={}",
-                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo());
-            throw new ViewerBusinessException("RATE_LIMITED", "打赏请求过于频繁，请稍后再试");
-        }
+    public ViewerRewardResponse rewardBlockHandler(RewardRequest request, BlockException exception) {
+        String traceId = TraceContext.getTraceId();
+        log.warn("[{}][{}] reward rate limited, rewardNo={}, viewerId={}, streamerId={}, amount={}",
+                traceId, ViewerConstants.SERVICE_NAME,
+                request.getRewardNo(), request.getViewerId(),
+                request.getStreamerId(), request.getRewardAmount());
+        throw new ViewerBusinessException("RATE_LIMITED", "打赏请求过于频繁，请稍后再试");
     }
 
     private ViewerRewardResponse settleReward(RewardRequest request) {
@@ -67,16 +66,20 @@ public class ViewerRewardService {
         ApiResponse<ViewerRewardResponse> response = financeGateway.settle(request);
         if (response == null || !response.isSuccess() || response.getData() == null) {
             String message = response != null ? response.getMessage() : "finance service unavailable";
-            log.error("[{}][{}] finance settle failed, api=/api/finance/rewards/settle, rewardNo={}, message={}",
-                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), message);
+            log.error("[{}][{}] finance settle failed, api=/api/finance/rewards/settle, rewardNo={}, viewerId={}, streamerId={}, amount={}, message={}",
+                    traceId, ViewerConstants.SERVICE_NAME,
+                    request.getRewardNo(), request.getViewerId(),
+                    request.getStreamerId(), request.getRewardAmount(), message);
             throw new ViewerBusinessException("FINANCE_ERROR", "打赏入账失败，请稍后重试");
         }
 
         ViewerRewardResponse rewardResponse = response.getData();
         rewardResponse.setMessage("打赏成功");
-        log.info("[{}][{}] reward settled, rewardNo={}, status={}",
+        log.info("[{}][{}] reward settled, rewardNo={}, viewerId={}, streamerId={}, amount={}, status={}",
                 traceId, ViewerConstants.SERVICE_NAME,
-                rewardResponse.getRewardNo(), rewardResponse.getSettleStatus());
+                rewardResponse.getRewardNo(), request.getViewerId(),
+                request.getStreamerId(), request.getRewardAmount(),
+                rewardResponse.getSettleStatus());
         rewardNotificationService.notifyAsync(traceId, rewardResponse);
         return rewardResponse;
     }
