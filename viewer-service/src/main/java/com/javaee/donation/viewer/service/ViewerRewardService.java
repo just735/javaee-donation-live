@@ -1,47 +1,128 @@
 package com.javaee.donation.viewer.service;
 
 import com.javaee.donation.common.api.ApiResponse;
+import com.javaee.donation.common.context.TraceContext;
 import com.javaee.donation.common.model.RewardRequest;
 import com.javaee.donation.common.model.TopViewerResponse;
 import com.javaee.donation.common.model.ViewerProfileResponse;
-import com.javaee.donation.viewer.client.AnalyticsClient;
-import com.javaee.donation.viewer.client.FinanceClient;
-import java.util.Collections;
+import com.javaee.donation.viewer.constant.ViewerConstants;
+import com.javaee.donation.viewer.dto.ProfileQueryResult;
+import com.javaee.donation.viewer.dto.TopViewersFetchResult;
+import com.javaee.donation.viewer.dto.TopViewersQueryResult;
+import com.javaee.donation.viewer.dto.ViewerRewardResponse;
+import com.javaee.donation.viewer.exception.ViewerBusinessException;
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ViewerRewardService {
 
-    private final FinanceClient financeClient;
-    private final AnalyticsClient analyticsClient;
+    private static final Logger log = LoggerFactory.getLogger(ViewerRewardService.class);
 
-    public ViewerRewardService(FinanceClient financeClient, AnalyticsClient analyticsClient) {
-        this.financeClient = financeClient;
-        this.analyticsClient = analyticsClient;
+    private final FinanceGateway financeGateway;
+    private final AnalyticsGateway analyticsGateway;
+    private final TopViewerCacheService topViewerCacheService;
+    private final RewardRequestValidator rewardRequestValidator;
+    private final RewardNotificationService rewardNotificationService;
+    private final RateLimiter rewardRateLimiter;
+
+    public ViewerRewardService(FinanceGateway financeGateway,
+                               AnalyticsGateway analyticsGateway,
+                               TopViewerCacheService topViewerCacheService,
+                               RewardRequestValidator rewardRequestValidator,
+                               RewardNotificationService rewardNotificationService,
+                               RateLimiterRegistry rateLimiterRegistry) {
+        this.financeGateway = financeGateway;
+        this.analyticsGateway = analyticsGateway;
+        this.topViewerCacheService = topViewerCacheService;
+        this.rewardRequestValidator = rewardRequestValidator;
+        this.rewardNotificationService = rewardNotificationService;
+        this.rewardRateLimiter = rateLimiterRegistry.rateLimiter("viewerReward");
     }
 
-    public String reward(RewardRequest request) {
-        ApiResponse<String> response = financeClient.settle(request);
-        if (response == null || !response.isSuccess()) {
-            return "reward accepted but finance pending";
+    public ViewerRewardResponse reward(RewardRequest request) {
+        String traceId = TraceContext.getTraceId();
+        rewardRequestValidator.validate(request);
+        log.info("[{}][{}] reward request accepted, rewardNo={}, viewerId={}, streamerId={}, amount={}",
+                traceId, ViewerConstants.SERVICE_NAME,
+                request.getRewardNo(), request.getViewerId(),
+                request.getStreamerId(), request.getRewardAmount());
+
+        try {
+            return rewardRateLimiter.executeSupplier(() -> settleReward(request));
+        } catch (RequestNotPermitted exception) {
+            log.warn("[{}][{}] reward rate limited, rewardNo={}",
+                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo());
+            throw new ViewerBusinessException("RATE_LIMITED", "打赏请求过于频繁，请稍后再试");
         }
-        return response.getData();
     }
 
-    public ViewerProfileResponse getProfile(String viewerId) {
-        ApiResponse<ViewerProfileResponse> response = analyticsClient.profile(viewerId);
+    private ViewerRewardResponse settleReward(RewardRequest request) {
+        String traceId = TraceContext.getTraceId();
+        ApiResponse<ViewerRewardResponse> response = financeGateway.settle(request);
         if (response == null || !response.isSuccess() || response.getData() == null) {
-            return new ViewerProfileResponse(viewerId, viewerId, "PENDING");
+            String message = response != null ? response.getMessage() : "finance service unavailable";
+            log.error("[{}][{}] finance settle failed, api=/api/finance/rewards/settle, rewardNo={}, message={}",
+                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), message);
+            throw new ViewerBusinessException("FINANCE_ERROR", "打赏入账失败，请稍后重试");
         }
-        return response.getData();
+
+        ViewerRewardResponse rewardResponse = response.getData();
+        rewardResponse.setMessage("打赏成功");
+        log.info("[{}][{}] reward settled, rewardNo={}, status={}",
+                traceId, ViewerConstants.SERVICE_NAME,
+                rewardResponse.getRewardNo(), rewardResponse.getSettleStatus());
+        rewardNotificationService.notifyAsync(traceId, rewardResponse);
+        return rewardResponse;
     }
 
-    public List<TopViewerResponse> getTopViewers(String streamerId, Integer limit) {
-        ApiResponse<List<TopViewerResponse>> response = analyticsClient.topViewers(streamerId, limit);
-        if (response == null || !response.isSuccess() || response.getData() == null) {
-            return Collections.emptyList();
+    public ProfileQueryResult getProfile(String viewerId) {
+        String traceId = TraceContext.getTraceId();
+        if (viewerId == null || viewerId.isBlank()) {
+            throw new ViewerBusinessException("INVALID_VIEWER_ID", "观众ID不能为空");
         }
-        return response.getData();
+        log.info("[{}][{}] profile query start, viewerId={}",
+                traceId, ViewerConstants.SERVICE_NAME, viewerId);
+
+        ViewerProfileResponse profile = analyticsGateway.getProfile(viewerId);
+        boolean degraded = ViewerConstants.PROFILE_TAG_PENDING.equals(profile.getProfileTag());
+        String hint = degraded ? ViewerConstants.PROFILE_DEGRADED_HINT : null;
+
+        log.info("[{}][{}] profile query done, viewerId={}, tag={}, degraded={}",
+                traceId, ViewerConstants.SERVICE_NAME, viewerId, profile.getProfileTag(), degraded);
+        return new ProfileQueryResult(profile, degraded, hint);
+    }
+
+    public TopViewersQueryResult getTopViewers(String streamerId, Integer limit) {
+        String traceId = TraceContext.getTraceId();
+        if (streamerId == null || streamerId.isBlank()) {
+            throw new ViewerBusinessException("INVALID_STREAMER_ID", "主播ID不能为空");
+        }
+        int queryLimit = limit == null || limit <= 0 ? 10 : Math.min(limit, 10);
+        log.info("[{}][{}] top viewers query start, streamerId={}, limit={}",
+                traceId, ViewerConstants.SERVICE_NAME, streamerId, queryLimit);
+
+        List<TopViewerResponse> cached = topViewerCacheService.get(streamerId, queryLimit);
+        if (cached != null) {
+            log.info("[{}][{}] top viewers hit cache, streamerId={}, size={}",
+                    traceId, ViewerConstants.SERVICE_NAME, streamerId, cached.size());
+            return new TopViewersQueryResult(cached, false, null);
+        }
+
+        TopViewersFetchResult fetchResult = analyticsGateway.getTopViewers(streamerId, queryLimit);
+        if (!fetchResult.isDegraded()) {
+            topViewerCacheService.put(streamerId, queryLimit, fetchResult.getViewers());
+        }
+
+        log.info("[{}][{}] top viewers query done, streamerId={}, size={}, degraded={}",
+                traceId, ViewerConstants.SERVICE_NAME, streamerId,
+                fetchResult.getViewers().size(), fetchResult.isDegraded());
+        return new TopViewersQueryResult(
+                fetchResult.getViewers(), fetchResult.isDegraded(), fetchResult.getHintMessage());
     }
 }
