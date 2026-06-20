@@ -12,6 +12,10 @@
   <artifactId>viewer-service</artifactId>
   <packaging>jar</packaging>
 
+  <properties>
+    <spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>com.javaee.donation</groupId>
@@ -36,10 +40,6 @@
     </dependency>
     <dependency>
       <groupId>org.springframework.cloud</groupId>
-      <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.cloud</groupId>
       <artifactId>spring-cloud-starter-consul-discovery</artifactId>
     </dependency>
     <dependency>
@@ -47,8 +47,9 @@
       <artifactId>spring-boot-starter-aop</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.github.resilience4j</groupId>
-      <artifactId>resilience4j-spring-boot3</artifactId>
+      <groupId>com.alibaba.cloud</groupId>
+      <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+      <version>${spring-cloud-alibaba.version}</version>
     </dependency>
     <dependency>
       <groupId>org.projectlombok</groupId>
