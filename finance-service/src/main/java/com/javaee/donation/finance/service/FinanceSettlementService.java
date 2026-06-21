@@ -17,8 +17,9 @@ import com.javaee.donation.finance.mapper.StreamerCommissionRuleMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -30,10 +31,15 @@ public class FinanceSettlementService {
 
     private static final Logger log = LoggerFactory.getLogger(FinanceSettlementService.class);
     private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("0.3000");
+    /** 提成规则缓存TTL：5秒 */
+    private static final long COMMISSION_CACHE_TTL_MS = 5000L;
 
     private final RewardEventMapper rewardEventMapper;
     private final StreamerCommissionRuleMapper commissionRuleMapper;
     private final StreamerBalanceMapper balanceMapper;
+
+    /** 内存缓存：streamerId → (commissionRate, cachedAt) */
+    private final Map<String, CachedCommission> commissionCache = new ConcurrentHashMap<>();
 
     public FinanceSettlementService(RewardEventMapper rewardEventMapper,
                                     StreamerCommissionRuleMapper commissionRuleMapper,
@@ -43,30 +49,21 @@ public class FinanceSettlementService {
         this.balanceMapper = balanceMapper;
     }
 
+    /**
+     * 入账结算（高性能版）：
+     * 1. 跳过预查，直接 INSERT，靠唯一索引 uk_reward_no 保证幂等
+     * 2. 提成规则走内存缓存，避免每次查库
+     * 3. 每次入账从 3-4 次 DB 操作降到 1-2 次
+     */
     @Transactional(rollbackFor = Exception.class)
     public RewardSettleResponse settle(RewardRequest request) {
         String traceId = TraceContext.getTraceId();
         log.info("[{}] settle reward start, rewardNo={}, streamerId={}, amount={}",
                 traceId, request.getRewardNo(), request.getStreamerId(), request.getRewardAmount());
 
-        // 1. 幂等检查：利用唯一索引 uk_reward_no，INSERT重复会拋异常，外层捕获后返回重复状态
-        // 先查是否已存在
-        LambdaQueryWrapper<RewardEvent> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(RewardEvent::getRewardNo, request.getRewardNo());
-        RewardEvent existing = rewardEventMapper.selectOne(queryWrapper);
-        if (existing != null) {
-            log.info("[{}] duplicate reward ignored, rewardNo={}", traceId, request.getRewardNo());
-            return RewardSettleResponse.builder()
-                    .rewardNo(request.getRewardNo())
-                    .settleStatus("DUPLICATE")
-                    .streamerId(existing.getStreamerId())
-                    .rewardAmount(existing.getRewardAmount())
-                    .settledAt(existing.getCreatedAt())
-                    .build();
-        }
-
-        // 2. 落打赏明细
         LocalDateTime rewardTime = parseTime(request.getRewardTime());
+
+        // 1. 直接插入打赏明细，利用唯一索引保证幂等（省去一次 SELECT 预查）
         RewardEvent event = new RewardEvent();
         event.setRewardNo(request.getRewardNo());
         event.setTraceId(traceId);
@@ -83,28 +80,30 @@ public class FinanceSettlementService {
         try {
             rewardEventMapper.insert(event);
         } catch (DuplicateKeyException e) {
-            // 并发场景下唯一键冲突：回查已插入的记录，返回幂等结果
-            RewardEvent existing2 = rewardEventMapper.selectOne(queryWrapper);
-            log.info("[{}] concurrent duplicate caught by unique key, rewardNo={}", traceId, request.getRewardNo());
+            // 唯一键冲突 → 幂等重复，回查返回已有记录
+            LambdaQueryWrapper<RewardEvent> qw = new LambdaQueryWrapper<>();
+            qw.eq(RewardEvent::getRewardNo, request.getRewardNo());
+            RewardEvent existing = rewardEventMapper.selectOne(qw);
+            log.info("[{}] duplicate reward (unique key), rewardNo={}", traceId, request.getRewardNo());
             return RewardSettleResponse.builder()
                     .rewardNo(request.getRewardNo())
                     .settleStatus("DUPLICATE")
-                    .streamerId(existing2.getStreamerId())
-                    .rewardAmount(existing2.getRewardAmount())
-                    .settledAt(existing2.getCreatedAt())
+                    .streamerId(existing.getStreamerId())
+                    .rewardAmount(existing.getRewardAmount())
+                    .settledAt(existing.getCreatedAt())
                     .build();
         }
         log.info("[{}] reward event inserted, id={}", traceId, event.getId());
 
-        // 3. 查当前生效的提成规则
-        BigDecimal commissionRate = resolveCommissionRate(request.getStreamerId(), rewardTime);
+        // 2. 查提成规则（优先读内存缓存）
+        BigDecimal commissionRate = resolveCommissionRateCached(request.getStreamerId(), rewardTime);
 
-        // 4. 计算提成和可领取
+        // 3. 计算提成和可领取
         BigDecimal rewardAmount = safeAmount(request.getRewardAmount());
         BigDecimal commissionAmount = rewardAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
         BigDecimal withdrawableIncrement = rewardAmount.subtract(commissionAmount);
 
-        // 5. 更新主播余额（乐观锁），带重试
+        // 4. 更新主播余额（乐观锁重试）
         updateStreamerBalance(request.getStreamerId(), rewardAmount, commissionAmount, withdrawableIncrement);
 
         log.info("[{}] settle reward success, rewardNo={}, commissionRate={}, commission={}, withdrawable={}",
@@ -144,6 +143,9 @@ public class FinanceSettlementService {
         rule.setCreatedAt(LocalDateTime.now());
         rule.setUpdatedAt(LocalDateTime.now());
         commissionRuleMapper.insert(rule);
+
+        // 清除该主播的提成缓存，使新规则立即生效
+        commissionCache.remove(request.getStreamerId());
 
         log.info("[{}] commission rule created, id={}", traceId, rule.getId());
 
@@ -221,7 +223,21 @@ public class FinanceSettlementService {
     // ---- 私有方法 ----
 
     /**
-     * 按打赏时间匹配当前生效的提成规则（不涉及事务、纯读）
+     * 按打赏时间匹配当前生效的提成规则（带内存缓存，TTL=5秒）
+     */
+    private BigDecimal resolveCommissionRateCached(String streamerId, LocalDateTime rewardTime) {
+        CachedCommission cached = commissionCache.get(streamerId);
+        if (cached != null && (System.currentTimeMillis() - cached.cachedAt) < COMMISSION_CACHE_TTL_MS) {
+            return cached.rate;
+        }
+        // 缓存未命中或过期，查库并更新缓存
+        BigDecimal rate = resolveCommissionRate(streamerId, rewardTime);
+        commissionCache.put(streamerId, new CachedCommission(rate, System.currentTimeMillis()));
+        return rate;
+    }
+
+    /**
+     * 从数据库查询生效的提成规则（纯读，无事务）
      */
     private BigDecimal resolveCommissionRate(String streamerId, LocalDateTime rewardTime) {
         LambdaQueryWrapper<StreamerCommissionRule> wrapper = new LambdaQueryWrapper<>();
@@ -316,5 +332,9 @@ public class FinanceSettlementService {
 
     private BigDecimal safeAmount(BigDecimal amount) {
         return amount == null ? BigDecimal.ZERO : amount;
+    }
+
+    /** 提成规则缓存值 */
+    private record CachedCommission(BigDecimal rate, long cachedAt) {
     }
 }

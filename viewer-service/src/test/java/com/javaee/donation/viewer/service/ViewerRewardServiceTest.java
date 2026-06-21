@@ -9,6 +9,7 @@ import com.javaee.donation.viewer.dto.ViewerRewardResponse;
 import com.javaee.donation.viewer.exception.ViewerBusinessException;
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,8 @@ class ViewerRewardServiceTest {
     private TopViewerCacheService topViewerCacheService;
     @Mock
     private RewardNotificationService rewardNotificationService;
+    @Mock
+    private Executor settlementExecutor;
 
     private ViewerRewardService viewerRewardService;
 
@@ -41,7 +44,7 @@ class ViewerRewardServiceTest {
     void setUp() {
         viewerRewardService = new ViewerRewardService(
                 financeGateway, analyticsGateway, topViewerCacheService,
-                new RewardRequestValidator(), rewardNotificationService);
+                new RewardRequestValidator(), rewardNotificationService, settlementExecutor);
     }
 
     @Test
@@ -53,20 +56,17 @@ class ViewerRewardServiceTest {
         assertEquals("INVALID_REWARD_NO", exception.getCode());
     }
 
+    /** 异步模式：reward() 立即返回 ACCEPTED，不等待财务服务 */
     @Test
-    void rewardShouldReturnSettleResult() {
+    void rewardShouldReturnAcceptedImmediately() {
         RewardRequest request = validRequest();
-        ViewerRewardResponse settleData = ViewerRewardResponse.builder()
-                .rewardNo("r-001")
-                .settleStatus("SETTLED")
-                .build();
-        when(financeGateway.settle(request)).thenReturn(ApiResponse.success("trace", settleData));
 
         ViewerRewardResponse response = viewerRewardService.reward(request);
 
-        assertEquals("SETTLED", response.getSettleStatus());
-        assertEquals("打赏成功", response.getMessage());
-        verify(rewardNotificationService).notifyAsync(any(), eq(response));
+        assertEquals("ACCEPTED", response.getSettleStatus());
+        assertEquals("打赏请求已接收，正在处理中", response.getMessage());
+        // 验证异步入账被提交到线程池
+        verify(settlementExecutor).execute(any(Runnable.class));
     }
 
     @Test

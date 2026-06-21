@@ -111,16 +111,30 @@ mvn clean package -DskipTests
 
 成功后会在各模块 `target/` 下生成 `.jar` 文件。
 
-### 5.2 按顺序启动服务
+### 5.2 按顺序启动服务（推荐 JVM 内存参数）
 
-| 启动顺序 | 服务 | 端口 | 是否需要 DB 环境变量 | 说明 |
+> **重要**：4 个服务同时运行时，建议限制每服务堆内存为 256MB，避免 OOM 崩溃。
+
+| 启动顺序 | 服务 | 端口 | 是否需要 DB 环境变量 | 推荐启动命令 |
 |----------|------|------|---------------------|------|
-| 1 | finance-service | 8082 | 是 | 财务服务，被 viewer 调用，先启动 |
-| 2 | analytics-service | 8083 | 是 | 分析服务，被 viewer 调用 |
-| 3 | viewer-service | 8081 | 否 | 核心入口服务 |
-| 4 | simulator-service | 8084 | 否 | 压测模拟服务（可选） |
+| 1 | finance-service | 8082 | 是 | `java -Xms128m -Xmx256m -jar finance-service/target/finance-service-1.0.0-SNAPSHOT.jar` |
+| 2 | analytics-service | 8083 | 是 | `java -Xms128m -Xmx256m -jar analytics-service/target/analytics-service-1.0.0-SNAPSHOT.jar` |
+| 3 | viewer-service | 8081 | 否 | `java -Xms128m -Xmx256m -jar viewer-service/target/viewer-service-1.0.0-SNAPSHOT.jar` |
+| 4 | simulator-service | 8084 | 否 | `java -Xms128m -Xmx256m -jar simulator-service/target/simulator-service-1.0.0-SNAPSHOT.jar` |
 
-### 5.3 验证启动成功
+### 5.3 性能优化配置说明
+
+项目已内置以下优化配置（`application-local.yml`）：
+
+| 优化项 | 配置值 | 说明 |
+|--------|--------|------|
+| **HikariCP 连接池** | max=20, min-idle=5 | finance/analytics 服务数据库连接池扩大，支持高并发 |
+| **Tomcat 线程池** | max=200, accept-count=100 | viewer/finance/simulator 服务处理并发请求能力提升 |
+| **Feign 超时** | finance:15s, analytics:8s, viewer:10s | 超时时间放宽，减少压测时的超时错误 |
+| **Feign 重试** | finance:3次(100ms起步), analytics:2次(200ms) | 瞬时故障自动重试，降低 FINANCE_ERROR |
+| **JVM 堆内存** | `-Xms128m -Xmx256m` | 每服务限256MB，4个服务共约1GB，避免OOM |
+
+### 5.4 验证启动成功
 
 访问各服务的 Health Check 接口，应返回 `status=200`：
 

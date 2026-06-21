@@ -4,12 +4,26 @@ spring:
     url: jdbc:mysql://${DB_HOST}/javaee_donation_live?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 5000
+      max-lifetime: 1800000
+      leak-detection-threshold: 10000
   cloud:
     consul:
       host: 127.0.0.1
       port: 8500
       discovery:
         prefer-ip-address: true
+server:
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    accept-count: 100
+    max-connections: 10000
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

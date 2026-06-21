@@ -19,19 +19,26 @@ spring:
       client:
         config:
           default:
-            connectTimeout: 1000
-            readTimeout: 3000
+            connectTimeout: 2000
+            readTimeout: 8000
           viewer-service:
-            connectTimeout: 1000
-            readTimeout: 3000
+            connectTimeout: 2000
+            readTimeout: 10000
 clients:
   viewer-service: http://127.0.0.1:8081
+server:
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    accept-count: 200
+    max-connections: 10000
 simulator:
   default-qps: 500
   default-duration-seconds: 10
   default-streamer-count: 100
   default-viewer-count: 300000
-  thread-pool-size: 256
+  thread-pool-size: 1024
   max-failure-samples: 50
   feign:
     connect-timeout-ms: 1000

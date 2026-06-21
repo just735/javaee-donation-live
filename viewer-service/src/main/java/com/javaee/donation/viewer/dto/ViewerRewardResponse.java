@@ -24,6 +24,7 @@ public class ViewerRewardResponse {
     /**
      * 入账状态。
      * <ul>
+     *   <li>ACCEPTED — 请求已接收，异步入账中（异步模式快速返回）</li>
      *   <li>SETTLED — 新入账成功</li>
      *   <li>DUPLICATE — 重复请求，未重复入账</li>
      * </ul>

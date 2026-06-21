@@ -10,16 +10,24 @@ spring:
         config:
           default:
             connectTimeout: 3000
-            readTimeout: 5000
+            readTimeout: 8000
           finance-service:
             connectTimeout: 3000
-            readTimeout: 10000
+            readTimeout: 15000
           analytics-service:
-            connectTimeout: 2000
-            readTimeout: 2000
+            connectTimeout: 3000
+            readTimeout: 8000
     sentinel:
       enabled: true
       eager: true
+
+server:
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    accept-count: 100
+    max-connections: 10000
 
 clients:
   finance-service: http://127.0.0.1:8082
