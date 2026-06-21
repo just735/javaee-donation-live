@@ -1,14 +1,49 @@
 spring:
   cloud:
     consul:
+      enabled: false
       host: 127.0.0.1
       port: 8500
       discovery:
         prefer-ip-address: true
+    openfeign:
+      httpclient:
+        hc5:
+          enabled: true
+          connection-request-timeout: 5
+          connection-request-timeout-unit: seconds
+        max-connections: 500
+        max-connections-per-route: 500
+        time-to-live: 900
+        time-to-live-unit: seconds
+      client:
+        config:
+          default:
+            connectTimeout: 1000
+            readTimeout: 3000
+          viewer-service:
+            connectTimeout: 1000
+            readTimeout: 3000
 clients:
   viewer-service: http://127.0.0.1:8081
 simulator:
   default-qps: 500
+  default-duration-seconds: 10
+  default-streamer-count: 100
+  default-viewer-count: 300000
+  thread-pool-size: 256
+  max-failure-samples: 50
+  feign:
+    connect-timeout-ms: 1000
+    read-timeout-ms: 3000
+    timeout-simulate-read-ms: 1
 logging:
   level:
     root: INFO
+    com.javaee.donation.simulator: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

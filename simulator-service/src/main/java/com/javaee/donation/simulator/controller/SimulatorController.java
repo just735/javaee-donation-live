@@ -2,8 +2,8 @@ package com.javaee.donation.simulator.controller;
 
 import com.javaee.donation.common.api.ApiResponse;
 import com.javaee.donation.common.context.TraceContext;
-import com.javaee.donation.common.model.SimulationRequest;
-import com.javaee.donation.common.model.SimulationResult;
+import com.javaee.donation.simulator.dto.SimulationStartRequest;
+import com.javaee.donation.simulator.dto.SimulationStartResult;
 import com.javaee.donation.simulator.service.SimulatorService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,12 +22,13 @@ public class SimulatorController {
     }
 
     @PostMapping("/start")
-    public ApiResponse<SimulationResult> start(@RequestBody SimulationRequest request) {
-        return ApiResponse.success(TraceContext.getTraceId(), simulatorService.start(request));
+    public ApiResponse<SimulationStartResult> start(@RequestBody SimulationStartRequest request) {
+        String traceId = TraceContext.getTraceId();
+        return ApiResponse.success(traceId, simulatorService.start(request, traceId));
     }
 
     @GetMapping("/templates/default")
-    public ApiResponse<SimulationRequest> template() {
+    public ApiResponse<SimulationStartRequest> template() {
         return ApiResponse.success(TraceContext.getTraceId(), simulatorService.defaultTemplate());
     }
 }
