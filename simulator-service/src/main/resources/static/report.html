@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>压测结果可视化</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 24px; background: #f7f7f7; color: #222; }
+    h1 { margin-bottom: 8px; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+    .card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card .label { color: #666; font-size: 13px; }
+    .card .value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+    .charts { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    canvas { background: #fff; border-radius: 8px; padding: 12px; }
+    button { padding: 8px 16px; cursor: pointer; }
+    pre { background: #fff; padding: 16px; border-radius: 8px; overflow: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Simulator 压测结果</h1>
+  <p>数据来源：<code>GET /api/simulator/results/latest</code></p>
+  <button onclick="loadData()">刷新</button>
+  <div class="summary" id="summary"></div>
+  <div class="charts">
+    <canvas id="qpsChart"></canvas>
+    <canvas id="latencyChart"></canvas>
+    <canvas id="errorChart"></canvas>
+  </div>
+  <h2>Markdown 报告</h2>
+  <pre id="report"></pre>
+
+  <script>
+    let qpsChart, latencyChart, errorChart;
+
+    async function loadData() {
+      const [resultResp, reportResp] = await Promise.all([
+        fetch('/api/simulator/results/latest').then(r => r.json()),
+        fetch('/api/simulator/report/latest').then(r => r.json())
+      ]);
+
+      if (!resultResp.success || !resultResp.data) {
+        document.getElementById('summary').innerHTML = '<div class="card">暂无压测结果，请先调用 POST /api/simulator/start</div>';
+        return;
+      }
+
+      const data = resultResp.data;
+      document.getElementById('summary').innerHTML = [
+        ['实际 QPS', data.actualQps],
+        ['成功率', data.successRate],
+        ['异常比例', data.errorRatio],
+        ['平均延迟(ms)', data.avgLatencyMs],
+        ['P95(ms)', data.p95LatencyMs],
+        ['请求总数', data.requestedCount],
+        ['限流数', data.blockedCount]
+      ].map(([label, value]) => `<div class="card"><div class="label">${label}</div><div class="value">${value ?? '-'}</div></div>`).join('');
+
+      const series = data.latencySeries || [];
+      const labels = series.map(p => new Date(p.epochSecond * 1000).toLocaleTimeString());
+
+      renderChart('qpsChart', qpsChart, c => { qpsChart = c; }, labels, series.map(p => p.qps), '每秒 QPS', '#2563eb');
+      renderChart('latencyChart', latencyChart, c => { latencyChart = c; }, labels, series.map(p => p.avgLatencyMs), '平均延迟(ms)', '#16a34a');
+      renderChart('errorChart', errorChart, c => { errorChart = c; }, labels, series.map(p => p.errorCount), '每秒错误数', '#dc2626');
+
+      document.getElementById('report').textContent = reportResp.success ? reportResp.data : '暂无报告';
+    }
+
+    function renderChart(canvasId, existing, setter, labels, values, label, color) {
+      if (existing) existing.destroy();
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      setter(new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label, data: values, borderColor: color, tension: 0.2, fill: false }]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+      }));
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
