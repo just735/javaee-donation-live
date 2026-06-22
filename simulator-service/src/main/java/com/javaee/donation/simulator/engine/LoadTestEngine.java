@@ -76,6 +76,7 @@ public class LoadTestEngine {
         try {
             while (System.currentTimeMillis() < endMillis) {
                 if (MODE_STEP.equals(mode)) {
+                    // Keep the configured step ramp while allowing the main loop to catch up after scheduler jitter.
                     long now = System.currentTimeMillis();
                     if (now >= nextStepAt && currentStepQps < targetQps) {
                         currentStepQps = Math.min(currentStepQps + stepQps, targetQps);
@@ -85,17 +86,21 @@ public class LoadTestEngine {
                     }
                 }
 
-                rateLimiter.acquire();
-                int index = sequence.getAndIncrement();
-                metrics.recordRequested();
-                inFlight.incrementAndGet();
-
-                executor.submit(() -> executeRequest(
-                        request, runId, parentTraceId, index, viewerCount, streamerCount,
-                        failureRate, timeoutRate, metrics, inFlight));
+                int permits = rateLimiter.acquireAvailable(resolveBatchSize(currentStepQps, targetQps, mode));
+                for (int i = 0; i < permits; i++) {
+                    int index = sequence.getAndIncrement();
+                    metrics.recordRequested();
+                    inFlight.incrementAndGet();
+                    executor.submit(() -> executeRequest(
+                            request, runId, parentTraceId, index, viewerCount, streamerCount,
+                            failureRate, timeoutRate, metrics, inFlight));
+                }
             }
 
+            long activeDuration = Math.min(System.currentTimeMillis(), endMillis) - startMillis;
             awaitInFlight(inFlight, durationSeconds + 30);
+            long totalDuration = System.currentTimeMillis() - startMillis;
+            return metrics.buildResult(runId, parentTraceId, activeDuration, totalDuration);
         } finally {
             executor.shutdown();
             try {
@@ -104,9 +109,6 @@ public class LoadTestEngine {
                 Thread.currentThread().interrupt();
             }
         }
-
-        long duration = System.currentTimeMillis() - startMillis;
-        return metrics.buildResult(runId, parentTraceId, duration);
     }
 
     private void executeRequest(SimulationStartRequest request,
@@ -221,6 +223,11 @@ public class LoadTestEngine {
 
     private static double defaultDouble(Double value, double defaultValue) {
         return value == null ? defaultValue : value;
+    }
+
+    private static int resolveBatchSize(int currentStepQps, int targetQps, String mode) {
+        int effectiveQps = MODE_STEP.equals(mode) ? currentStepQps : targetQps;
+        return Math.max(1, Math.min(Math.max(effectiveQps / 10, 1), 32));
     }
 
     private static void awaitInFlight(AtomicInteger inFlight, int timeoutSeconds) {

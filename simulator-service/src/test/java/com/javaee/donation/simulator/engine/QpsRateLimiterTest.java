@@ -17,4 +17,15 @@ class QpsRateLimiterTest {
         assertTrue(elapsedMs >= 900, "expected ~1s for 100 tokens, got " + elapsedMs + "ms");
         assertTrue(elapsedMs < 1500, "expected ~1s for 100 tokens, got " + elapsedMs + "ms");
     }
+
+    @Test
+    void shouldAccumulatePermitsAfterDelay() throws InterruptedException {
+        QpsRateLimiter limiter = new QpsRateLimiter(50);
+        limiter.acquire();
+
+        Thread.sleep(120);
+
+        int permits = limiter.acquireAvailable(10);
+        assertTrue(permits >= 5, "expected accumulated permits after delay, got " + permits);
+    }
 }

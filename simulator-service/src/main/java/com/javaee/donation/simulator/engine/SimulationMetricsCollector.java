@@ -85,7 +85,7 @@ public class SimulationMetricsCollector {
         failureSamples.add(new FailureSample(traceId, reason, latencyMs));
     }
 
-    public SimulationStartResult buildResult(String runId, String traceId, long durationMillis) {
+    public SimulationStartResult buildResult(String runId, String traceId, long activeDurationMillis, long durationMillis) {
         SimulationStartResult result = new SimulationStartResult();
         int requested = requestedCount.get();
         int success = successCount.get();
@@ -107,7 +107,7 @@ public class SimulationMetricsCollector {
         result.setDurationMillis(durationMillis);
         result.setSuccessRate(requested == 0 ? 0.0 : round4(success * 1.0 / requested));
         result.setErrorRatio(requested == 0 ? 0.0 : round4(errors * 1.0 / requested));
-        result.setActualQps(durationMillis <= 0 ? 0.0 : round4(requested * 1000.0 / durationMillis));
+        result.setActualQps(activeDurationMillis <= 0 ? 0.0 : round4(requested * 1000.0 / activeDurationMillis));
 
         if (requested > 0) {
             result.setAvgLatencyMs(latencySumMs.sum() / requested);
