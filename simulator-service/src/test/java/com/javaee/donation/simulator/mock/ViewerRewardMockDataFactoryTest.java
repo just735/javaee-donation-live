@@ -35,4 +35,12 @@ class ViewerRewardMockDataFactoryTest {
         RewardRequest b = factory.next(2, 100, 10, null);
         assertNotEquals(a.getRewardNo(), b.getRewardNo());
     }
+
+    @Test
+    void shouldSpreadAcrossStreamersWhenNoFixedStreamerProvided() {
+        RewardRequest first = factory.next(0, 100, 100, null);
+        RewardRequest second = factory.next(1, 100, 100, null);
+
+        assertNotEquals(first.getStreamerId(), second.getStreamerId());
+    }
 }

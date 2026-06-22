@@ -23,6 +23,9 @@ public class RewardEvent {
     private String streamerName;
     private BigDecimal rewardAmount;
     private LocalDateTime rewardTime;
+    private BigDecimal commissionRate;
+    private BigDecimal commissionAmount;
+    private BigDecimal withdrawableAmount;
     private String settleStatus;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

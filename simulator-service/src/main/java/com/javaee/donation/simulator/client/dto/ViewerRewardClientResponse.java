@@ -8,4 +8,5 @@ public class ViewerRewardClientResponse {
     private String rewardNo;
     private String settleStatus;
     private String message;
+    private String streamerId;
 }

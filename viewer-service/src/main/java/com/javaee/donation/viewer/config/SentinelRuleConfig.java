@@ -22,7 +22,13 @@ public class SentinelRuleConfig {
     private static final int MIN_REQUEST_AMOUNT = 5;
     private static final int DEGRADE_TIME_WINDOW_SEC = 10;
     private static final double ERROR_RATIO_THRESHOLD = 0.5;
-    private static final long PROFILE_MAX_RT_MS = 2000L;
+    private static final long ANALYTICS_MAX_RT_MS = 2000L;
+
+    private final ViewerRewardProperties properties;
+
+    public SentinelRuleConfig(ViewerRewardProperties properties) {
+        this.properties = properties;
+    }
 
     @PostConstruct
     public void initRules() {
@@ -33,7 +39,7 @@ public class SentinelRuleConfig {
     private void initFlowRules() {
         FlowRule rewardFlow = new FlowRule("viewerReward")
                 .setGrade(RuleConstant.FLOW_GRADE_QPS)
-                .setCount(200);
+                .setCount(properties.getQpsLimit());
         FlowRuleManager.loadRules(List.of(rewardFlow));
     }
 
@@ -41,8 +47,9 @@ public class SentinelRuleConfig {
         List<DegradeRule> rules = new ArrayList<>();
 
         rules.add(buildErrorRatioRule("analyticsProfile"));
-        rules.add(buildSlowRequestRule("analyticsProfile", PROFILE_MAX_RT_MS));
+        rules.add(buildSlowRequestRule("analyticsProfile", ANALYTICS_MAX_RT_MS));
         rules.add(buildErrorRatioRule("analyticsTopViewers"));
+        rules.add(buildSlowRequestRule("analyticsTopViewers", ANALYTICS_MAX_RT_MS));
         rules.add(buildErrorRatioRule("financeSettle"));
 
         DegradeRuleManager.loadRules(rules);

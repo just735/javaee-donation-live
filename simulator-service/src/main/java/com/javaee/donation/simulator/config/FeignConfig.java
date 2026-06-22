@@ -9,8 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class FeignConfig {
 
-    /** 观众服务重试：最多2次，间隔150ms（压测场景下快速重试） */
-    private static final Retryer VIEWER_RETRYER = new Retryer.Default(150, 500, 2);
+    private static final Retryer NEVER_RETRY = Retryer.NEVER_RETRY;
 
     @Bean
     public RequestInterceptor traceIdRequestInterceptor() {
@@ -24,6 +23,6 @@ public class FeignConfig {
 
     @Bean
     public Retryer viewerRetryer() {
-        return VIEWER_RETRYER;
+        return NEVER_RETRY;
     }
 }

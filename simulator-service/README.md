@@ -26,7 +26,7 @@
 curl http://localhost:8084/api/simulator/templates/default
 ```
 
-默认参数：100 主播、300000 观众、500 QPS、10 秒、FIXED 模式。
+默认参数：100 主播、300000 观众、500 QPS、10 秒、FIXED 模式；未显式指定 `streamerId` 时会自动分散到多个主播，避免单主播热点行影响全链路验收。
 
 ## 500 QPS 推荐配置
 
@@ -54,7 +54,9 @@ java -Xms512m -Xmx1g -Dfile.encoding=UTF-8 -jar simulator-service.jar
 ### 验收标准
 
 - **发压侧**：响应中 `actualQps >= 480` 即表示 simulator 单节点发压能力达标
-- **全链路**：若 `blockedCount > 0`，说明 viewer-service Sentinel 限流（默认约 200 QPS）触发，需协调成员 A 临时调高限流后再验全链路成功率
+- **受理侧**：关注 `acceptedCount`，确认 viewer-service 在单节点至少 `500 req/s` 的压力下仍能稳定接受请求
+- **结算侧**：关注 `settledCount` / `duplicateCount` 与 viewer 任务表、finance 落账结果，确认不存在丢账和重复记账
+- **全链路**：若 `blockedCount > 0`，说明 viewer-service 的 `viewer.reward.qps-limit` 配置仍偏低，需要调高后再验全链路成功率
 
 ## 压测模式
 
@@ -111,7 +113,7 @@ simulator:
 
 | 现象 | 处理方式 |
 |------|----------|
-| `blockedCount` 偏高 | 请成员 A 调高 viewer-service Sentinel `viewerReward` 限流 |
+| `blockedCount` 偏高 | 检查并调高 viewer-service `viewer.reward.qps-limit`，避免 viewer 先于下游成为瓶颈 |
 | 成功率低但无限流 | 请成员 B 检查 finance-service 数据库连接池 |
 | 超时可忽略 | 检查 viewer/finance 响应时间 |
 

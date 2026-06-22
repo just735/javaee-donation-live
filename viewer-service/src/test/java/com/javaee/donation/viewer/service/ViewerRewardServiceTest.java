@@ -1,13 +1,24 @@
 package com.javaee.donation.viewer.service;
 
-import com.javaee.donation.common.api.ApiResponse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.javaee.donation.common.model.RewardRequest;
+import com.javaee.donation.viewer.constant.ViewerConstants;
 import com.javaee.donation.viewer.dto.ProfileQueryResult;
 import com.javaee.donation.viewer.dto.TopViewersFetchResult;
 import com.javaee.donation.viewer.dto.TopViewersQueryResult;
 import com.javaee.donation.viewer.dto.ViewerRewardResponse;
+import com.javaee.donation.viewer.entity.RewardIngestTask;
 import com.javaee.donation.viewer.exception.ViewerBusinessException;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,25 +27,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 @ExtendWith(MockitoExtension.class)
 class ViewerRewardServiceTest {
 
-    @Mock
-    private FinanceGateway financeGateway;
     @Mock
     private AnalyticsGateway analyticsGateway;
     @Mock
     private TopViewerCacheService topViewerCacheService;
     @Mock
-    private RewardNotificationService rewardNotificationService;
+    private RewardTaskService rewardTaskService;
+    @Mock
+    private RewardSettlementProcessor rewardSettlementProcessor;
     @Mock
     private Executor settlementExecutor;
 
@@ -43,8 +46,12 @@ class ViewerRewardServiceTest {
     @BeforeEach
     void setUp() {
         viewerRewardService = new ViewerRewardService(
-                financeGateway, analyticsGateway, topViewerCacheService,
-                new RewardRequestValidator(), rewardNotificationService, settlementExecutor);
+                analyticsGateway,
+                topViewerCacheService,
+                new RewardRequestValidator(),
+                rewardTaskService,
+                rewardSettlementProcessor,
+                settlementExecutor);
     }
 
     @Test
@@ -56,17 +63,43 @@ class ViewerRewardServiceTest {
         assertEquals("INVALID_REWARD_NO", exception.getCode());
     }
 
-    /** 异步模式：reward() 立即返回 ACCEPTED，不等待财务服务 */
     @Test
-    void rewardShouldReturnAcceptedImmediately() {
+    void rewardShouldPersistThenReturnAccepted() {
         RewardRequest request = validRequest();
+        RewardIngestTask task = pendingTask();
+        when(rewardTaskService.createTask(request)).thenReturn(task);
+        when(rewardTaskService.getByRewardNo("r-001")).thenReturn(task);
 
         ViewerRewardResponse response = viewerRewardService.reward(request);
 
         assertEquals("ACCEPTED", response.getSettleStatus());
         assertEquals("打赏请求已接收，正在处理中", response.getMessage());
-        // 验证异步入账被提交到线程池
+        verify(rewardTaskService).createTask(request);
         verify(settlementExecutor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void rewardShouldReturnDuplicateWhenTaskAlreadyTerminal() {
+        RewardRequest request = validRequest();
+        RewardIngestTask task = pendingTask();
+        task.setTaskStatus(ViewerConstants.TASK_STATUS_DUPLICATE);
+        when(rewardTaskService.createTask(request)).thenReturn(task);
+
+        ViewerRewardResponse response = viewerRewardService.reward(request);
+
+        assertEquals("DUPLICATE", response.getSettleStatus());
+        assertEquals("打赏请求已处理，请勿重复提交", response.getMessage());
+    }
+
+    @Test
+    void submitSettlementShouldMarkRetryWhenExecutorRejected() {
+        RewardIngestTask task = pendingTask();
+        when(rewardTaskService.getByRewardNo("r-001")).thenReturn(task);
+        doThrow(new RuntimeException("queue full")).when(settlementExecutor).execute(any(Runnable.class));
+
+        viewerRewardService.submitSettlement("r-001");
+
+        verify(rewardTaskService).markRetry(eq(1L), eq("queue full"));
     }
 
     @Test
@@ -99,5 +132,16 @@ class ViewerRewardServiceTest {
         request.setStreamerId("s-1");
         request.setRewardAmount(new BigDecimal("10.00"));
         return request;
+    }
+
+    private RewardIngestTask pendingTask() {
+        RewardIngestTask task = new RewardIngestTask();
+        task.setId(1L);
+        task.setRewardNo("r-001");
+        task.setStreamerId("s-1");
+        task.setRewardAmount(new BigDecimal("10.00"));
+        task.setTaskStatus(ViewerConstants.TASK_STATUS_PENDING);
+        task.setCreatedAt(LocalDateTime.now());
+        return task;
     }
 }

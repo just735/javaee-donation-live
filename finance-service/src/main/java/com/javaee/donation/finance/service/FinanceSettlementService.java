@@ -16,6 +16,7 @@ import com.javaee.donation.finance.mapper.StreamerBalanceMapper;
 import com.javaee.donation.finance.mapper.StreamerCommissionRuleMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +64,11 @@ public class FinanceSettlementService {
 
         LocalDateTime rewardTime = parseTime(request.getRewardTime());
 
+        BigDecimal rewardAmount = safeAmount(request.getRewardAmount());
+        BigDecimal commissionRate = resolveCommissionRateCached(request.getStreamerId(), rewardTime);
+        BigDecimal commissionAmount = rewardAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal withdrawableIncrement = rewardAmount.subtract(commissionAmount);
+
         // 1. 直接插入打赏明细，利用唯一索引保证幂等（省去一次 SELECT 预查）
         RewardEvent event = new RewardEvent();
         event.setRewardNo(request.getRewardNo());
@@ -72,8 +78,11 @@ public class FinanceSettlementService {
         event.setViewerGender(request.getViewerGender());
         event.setStreamerId(request.getStreamerId());
         event.setStreamerName(request.getStreamerName());
-        event.setRewardAmount(safeAmount(request.getRewardAmount()));
+        event.setRewardAmount(rewardAmount);
         event.setRewardTime(rewardTime);
+        event.setCommissionRate(commissionRate);
+        event.setCommissionAmount(commissionAmount);
+        event.setWithdrawableAmount(withdrawableIncrement);
         event.setSettleStatus("SETTLED");
         event.setCreatedAt(LocalDateTime.now());
         event.setUpdatedAt(LocalDateTime.now());
@@ -90,20 +99,15 @@ public class FinanceSettlementService {
                     .settleStatus("DUPLICATE")
                     .streamerId(existing.getStreamerId())
                     .rewardAmount(existing.getRewardAmount())
+                    .commissionRate(existing.getCommissionRate())
+                    .commissionAmount(existing.getCommissionAmount())
+                    .withdrawableAmount(existing.getWithdrawableAmount())
                     .settledAt(existing.getCreatedAt())
                     .build();
         }
         log.info("[{}] reward event inserted, id={}", traceId, event.getId());
 
-        // 2. 查提成规则（优先读内存缓存）
-        BigDecimal commissionRate = resolveCommissionRateCached(request.getStreamerId(), rewardTime);
-
-        // 3. 计算提成和可领取
-        BigDecimal rewardAmount = safeAmount(request.getRewardAmount());
-        BigDecimal commissionAmount = rewardAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal withdrawableIncrement = rewardAmount.subtract(commissionAmount);
-
-        // 4. 更新主播余额（乐观锁重试）
+        // 2. 更新主播余额（乐观锁重试）
         updateStreamerBalance(request.getStreamerId(), rewardAmount, commissionAmount, withdrawableIncrement);
 
         log.info("[{}] settle reward success, rewardNo={}, commissionRate={}, commission={}, withdrawable={}",
@@ -226,11 +230,13 @@ public class FinanceSettlementService {
      * 按打赏时间匹配当前生效的提成规则（带内存缓存，TTL=5秒）
      */
     private BigDecimal resolveCommissionRateCached(String streamerId, LocalDateTime rewardTime) {
+        if (Duration.between(rewardTime, LocalDateTime.now()).abs().toMinutes() >= 1) {
+            return resolveCommissionRate(streamerId, rewardTime);
+        }
         CachedCommission cached = commissionCache.get(streamerId);
         if (cached != null && (System.currentTimeMillis() - cached.cachedAt) < COMMISSION_CACHE_TTL_MS) {
             return cached.rate;
         }
-        // 缓存未命中或过期，查库并更新缓存
         BigDecimal rate = resolveCommissionRate(streamerId, rewardTime);
         commissionCache.put(streamerId, new CachedCommission(rate, System.currentTimeMillis()));
         return rate;

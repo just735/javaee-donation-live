@@ -169,7 +169,7 @@ Invoke-RestMethod -Uri "http://localhost:8081/api/viewers/reward" `
   -Method Post -ContentType "application/json" -Body $body
 ```
 
-预期返回：`settleStatus=SETTLED`，包含 commissionRate、withdrawableAmount 等字段。
+预期返回：`settleStatus=ACCEPTED`，表示观众服务已持久化并接受请求，后续由异步任务调用财务服务完成最终 `SETTLED` 入账；余额、画像、TOP10 等结果以后续异步处理完成后的状态为准。
 
 ### 6.2 其他 GET 接口（可直接浏览器访问）
 

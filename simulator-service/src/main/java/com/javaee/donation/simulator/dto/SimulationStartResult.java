@@ -11,6 +11,9 @@ public class SimulationStartResult {
     private String traceId;
     private Integer requestedCount;
     private Integer successCount;
+    private Integer acceptedCount;
+    private Integer settledCount;
+    private Integer duplicateCount;
     private Integer failedCount;
     private Integer timeoutCount;
     private Integer blockedCount;
