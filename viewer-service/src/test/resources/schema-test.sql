@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS t_reward_ingest_task (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    reward_no VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64) NOT NULL,
+    viewer_id VARCHAR(64) NOT NULL,
+    viewer_name VARCHAR(128) DEFAULT NULL,
+    viewer_gender VARCHAR(16) DEFAULT NULL,
+    streamer_id VARCHAR(64) NOT NULL,
+    streamer_name VARCHAR(128) DEFAULT NULL,
+    reward_amount DECIMAL(18,2) NOT NULL,
+    reward_time VARCHAR(64) DEFAULT NULL,
+    task_status VARCHAR(32) NOT NULL,
+    retry_count INT NOT NULL DEFAULT 0,
+    last_error VARCHAR(500) DEFAULT NULL,
+    next_retry_at DATETIME DEFAULT NULL,
+    processing_deadline DATETIME DEFAULT NULL,
+    settled_at DATETIME DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_reward_no (reward_no),
+    KEY idx_task_status_retry (task_status, next_retry_at),
+    KEY idx_task_processing_deadline (task_status, processing_deadline)
+);

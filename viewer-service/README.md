@@ -37,16 +37,16 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `rewardNo` | String | 打赏单号 |
-| `settleStatus` | String | 入账状态：`SETTLED` / `DUPLICATE` 等 |
+| `settleStatus` | String | 返回状态：通常立即返回 `ACCEPTED`；重复请求可返回 `DUPLICATE` |
 | `streamerId` | String | 主播 ID |
 | `rewardAmount` | BigDecimal | 打赏金额 |
-| `commissionRate` | BigDecimal | 提成比例 |
-| `commissionAmount` | BigDecimal | 提成金额 |
-| `withdrawableAmount` | BigDecimal | 主播可提现增量 |
-| `settledAt` | LocalDateTime | 入账时间 |
-| `message` | String | 用户提示，如「打赏成功」 |
+| `commissionRate` | BigDecimal | 最终结算时使用的提成比例，`ACCEPTED` 阶段通常为空 |
+| `commissionAmount` | BigDecimal | 最终结算提成金额，`ACCEPTED` 阶段通常为空 |
+| `withdrawableAmount` | BigDecimal | 最终计入主播可提现金额，`ACCEPTED` 阶段通常为空 |
+| `settledAt` | LocalDateTime | 最终入账时间，`ACCEPTED` 阶段通常为空 |
+| `message` | String | 用户提示，如「打赏请求已接收，正在处理中」 |
 
-**下游**：调用 `finance-service` `POST /api/finance/rewards/settle` 完成入账。
+**下游**：请求先持久化到 viewer 侧任务表，再由异步任务调用 `finance-service` `POST /api/finance/rewards/settle` 完成最终入账。
 
 ---
 
@@ -120,12 +120,12 @@
 
 | 资源名 | 类型 | 规则摘要 |
 |--------|------|----------|
-| `viewerReward` | 流控 | QPS 200/s |
+| `viewerReward` | 流控 | 默认 QPS 800/s，可通过 `viewer.reward.qps-limit` 调整 |
 | `analyticsProfile` | 熔断 | 异常比例 50%；慢调用 RT > 2s 且慢调用比例 50% |
-| `analyticsTopViewers` | 熔断 | 异常比例 50% |
+| `analyticsTopViewers` | 熔断 | 异常比例 50%；慢调用 RT > 2s 且慢调用比例 50% |
 | `financeSettle` | 熔断 | 异常比例 50% |
 
-画像查询另配合 `CompletableFuture.orTimeout(2s)` 与 Feign `readTimeout: 2000ms`，确保 2 秒内返回或降级。
+画像查询与 TOP10 查询都配合 `CompletableFuture.orTimeout(2s)` 与 Feign `readTimeout: 2000ms`，确保 2 秒内返回或降级。
 
 ---
 
@@ -134,7 +134,7 @@
 | 功能 | 实现类 | 说明 |
 |------|--------|------|
 | TOP10 本地缓存 | `TopViewerCacheService` | 热点主播 30s 缓存 |
-| 打赏限流 | Sentinel `viewerReward` | 200 QPS |
+| 打赏限流 | Sentinel `viewerReward` | 默认 800 QPS，可配置调整 |
 | 异步通知 | `RewardNotificationService` | 入账成功后异步打日志，不阻塞主接口 |
 
 ---

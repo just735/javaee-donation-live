@@ -10,13 +10,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public class SimulationMetricsCollector {
 
     private final int maxFailureSamples;
     private final AtomicInteger successCount = new AtomicInteger();
+    private final AtomicInteger acceptedCount = new AtomicInteger();
+    private final AtomicInteger settledCount = new AtomicInteger();
+    private final AtomicInteger duplicateCount = new AtomicInteger();
     private final AtomicInteger failedCount = new AtomicInteger();
     private final AtomicInteger timeoutCount = new AtomicInteger();
     private final AtomicInteger blockedCount = new AtomicInteger();
@@ -34,7 +36,20 @@ public class SimulationMetricsCollector {
         requestedCount.incrementAndGet();
     }
 
-    public void recordSuccess(long latencyMs, long epochSecond) {
+    public void recordAccepted(long latencyMs, long epochSecond) {
+        acceptedCount.incrementAndGet();
+        successCount.incrementAndGet();
+        recordLatency(latencyMs, epochSecond, true);
+    }
+
+    public void recordSettled(long latencyMs, long epochSecond) {
+        settledCount.incrementAndGet();
+        successCount.incrementAndGet();
+        recordLatency(latencyMs, epochSecond, true);
+    }
+
+    public void recordDuplicate(long latencyMs, long epochSecond) {
+        duplicateCount.incrementAndGet();
         successCount.incrementAndGet();
         recordLatency(latencyMs, epochSecond, true);
     }
@@ -83,6 +98,9 @@ public class SimulationMetricsCollector {
         result.setTraceId(traceId);
         result.setRequestedCount(requested);
         result.setSuccessCount(success);
+        result.setAcceptedCount(acceptedCount.get());
+        result.setSettledCount(settledCount.get());
+        result.setDuplicateCount(duplicateCount.get());
         result.setFailedCount(failed);
         result.setTimeoutCount(timeout);
         result.setBlockedCount(blocked);

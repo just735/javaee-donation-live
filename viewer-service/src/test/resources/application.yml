@@ -1,0 +1,36 @@
+spring:
+  profiles:
+    active: test
+  datasource:
+    url: jdbc:h2:mem:viewerdb;MODE=MySQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-test.sql
+  cloud:
+    consul:
+      enabled: false
+      discovery:
+        enabled: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+clients:
+  finance-service: localhost:8082
+  analytics-service: localhost:8083
+
+viewer:
+  reward:
+    qps-limit: 800
+    settlement:
+      thread-pool-size: 8
+      queue-capacity: 100
+      retry-delay-seconds: 1
+      processing-lease-seconds: 5
+      recovery-batch-size: 20
+      recovery-fixed-delay-ms: 1000

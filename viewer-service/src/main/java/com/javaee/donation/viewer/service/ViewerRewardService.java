@@ -2,7 +2,6 @@ package com.javaee.donation.viewer.service;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
-import com.javaee.donation.common.api.ApiResponse;
 import com.javaee.donation.common.context.TraceContext;
 import com.javaee.donation.common.model.RewardRequest;
 import com.javaee.donation.common.model.TopViewerResponse;
@@ -12,6 +11,7 @@ import com.javaee.donation.viewer.dto.ProfileQueryResult;
 import com.javaee.donation.viewer.dto.TopViewersFetchResult;
 import com.javaee.donation.viewer.dto.TopViewersQueryResult;
 import com.javaee.donation.viewer.dto.ViewerRewardResponse;
+import com.javaee.donation.viewer.entity.RewardIngestTask;
 import com.javaee.donation.viewer.exception.ViewerBusinessException;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -25,31 +25,27 @@ public class ViewerRewardService {
 
     private static final Logger log = LoggerFactory.getLogger(ViewerRewardService.class);
 
-    private final FinanceGateway financeGateway;
     private final AnalyticsGateway analyticsGateway;
     private final TopViewerCacheService topViewerCacheService;
     private final RewardRequestValidator rewardRequestValidator;
-    private final RewardNotificationService rewardNotificationService;
+    private final RewardTaskService rewardTaskService;
+    private final RewardSettlementProcessor rewardSettlementProcessor;
     private final Executor settlementExecutor;
 
-    public ViewerRewardService(FinanceGateway financeGateway,
-                               AnalyticsGateway analyticsGateway,
+    public ViewerRewardService(AnalyticsGateway analyticsGateway,
                                TopViewerCacheService topViewerCacheService,
                                RewardRequestValidator rewardRequestValidator,
-                               RewardNotificationService rewardNotificationService,
+                               RewardTaskService rewardTaskService,
+                               RewardSettlementProcessor rewardSettlementProcessor,
                                @Qualifier("settlementExecutor") Executor settlementExecutor) {
-        this.financeGateway = financeGateway;
         this.analyticsGateway = analyticsGateway;
         this.topViewerCacheService = topViewerCacheService;
         this.rewardRequestValidator = rewardRequestValidator;
-        this.rewardNotificationService = rewardNotificationService;
+        this.rewardTaskService = rewardTaskService;
+        this.rewardSettlementProcessor = rewardSettlementProcessor;
         this.settlementExecutor = settlementExecutor;
     }
 
-    /**
-     * 打赏入口：快速验证后立即返回 ACCEPTED，实际入账异步执行。
-     * 响应时间从 ~960ms（同步调用链）降至 <10ms，大幅提升 QPS 吞吐。
-     */
     @SentinelResource(value = "viewerReward", blockHandler = "rewardBlockHandler")
     public ViewerRewardResponse reward(RewardRequest request) {
         String traceId = TraceContext.getTraceId();
@@ -59,40 +55,39 @@ public class ViewerRewardService {
                 request.getRewardNo(), request.getViewerId(),
                 request.getStreamerId(), request.getRewardAmount());
 
-        // 立即返回，告知客户端请求已接收
-        ViewerRewardResponse quickResponse = new ViewerRewardResponse(
-                request.getRewardNo(), "ACCEPTED", request.getStreamerId(),
-                request.getRewardAmount(), null, null, null, null,
-                "打赏请求已接收，正在处理中");
+        RewardIngestTask task = rewardTaskService.createTask(request);
+        if (isTerminal(task)) {
+            return ViewerRewardResponse.builder()
+                    .rewardNo(task.getRewardNo())
+                    .settleStatus("DUPLICATE")
+                    .streamerId(task.getStreamerId())
+                    .rewardAmount(task.getRewardAmount())
+                    .message("打赏请求已处理，请勿重复提交")
+                    .build();
+        }
 
-        // 异步入账：不阻塞响应线程
-        String capturedTraceId = traceId;
-        settlementExecutor.execute(() -> settleRewardAsync(capturedTraceId, request));
-
-        return quickResponse;
+        submitSettlement(task.getRewardNo());
+        return ViewerRewardResponse.builder()
+                .rewardNo(task.getRewardNo())
+                .settleStatus("ACCEPTED")
+                .streamerId(task.getStreamerId())
+                .rewardAmount(task.getRewardAmount())
+                .message("打赏请求已接收，正在处理中")
+                .build();
     }
 
-    /** 异步入账：在独立线程池中完成 viewer→finance→MySQL 的完整调用链 */
-    private void settleRewardAsync(String traceId, RewardRequest request) {
+    public void submitSettlement(String rewardNo) {
+        RewardIngestTask task = rewardTaskService.getByRewardNo(rewardNo);
+        if (task == null || isTerminal(task)) {
+            return;
+        }
         try {
-            TraceContext.setTraceId(traceId);
-            ApiResponse<ViewerRewardResponse> response = financeGateway.settle(request);
-            if (response != null && response.isSuccess() && response.getData() != null) {
-                ViewerRewardResponse settled = response.getData();
-                settled.setMessage("打赏成功");
-                log.info("[{}][{}] async settle success, rewardNo={}, status={}",
-                        traceId, ViewerConstants.SERVICE_NAME, settled.getRewardNo(), settled.getSettleStatus());
-                rewardNotificationService.notifyAsync(traceId, settled);
-            } else {
-                String msg = response != null ? response.getMessage() : "finance unavailable";
-                log.error("[{}][{}] async settle failed, rewardNo={}, message={}",
-                        traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), msg);
-            }
-        } catch (Exception e) {
-            log.error("[{}][{}] async settle error, rewardNo={}, error={}",
-                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), e.getMessage(), e);
-        } finally {
-            TraceContext.clear();
+            settlementExecutor.execute(() -> rewardSettlementProcessor.process(rewardNo));
+        } catch (RuntimeException exception) {
+            rewardTaskService.markRetry(task.getId(), exception.getMessage());
+            log.error("[{}][{}] settlement submit failed, rewardNo={}, error={}",
+                    task.getTraceId(), ViewerConstants.SERVICE_NAME,
+                    rewardNo, exception.getMessage(), exception);
         }
     }
 
@@ -148,5 +143,10 @@ public class ViewerRewardService {
                 fetchResult.getViewers().size(), fetchResult.isDegraded());
         return new TopViewersQueryResult(
                 fetchResult.getViewers(), fetchResult.isDegraded(), fetchResult.getHintMessage());
+    }
+
+    private boolean isTerminal(RewardIngestTask task) {
+        return ViewerConstants.TASK_STATUS_SETTLED.equals(task.getTaskStatus())
+                || ViewerConstants.TASK_STATUS_DUPLICATE.equals(task.getTaskStatus());
     }
 }

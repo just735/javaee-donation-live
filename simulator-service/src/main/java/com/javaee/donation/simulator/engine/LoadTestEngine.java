@@ -161,9 +161,17 @@ public class LoadTestEngine {
 
             long latency = System.currentTimeMillis() - start;
             if (response != null && response.isSuccess()) {
-                metrics.recordSuccess(latency, epochSecond);
-                log.debug("[traceId={}] reward sent viewerId={} latencyMs={}",
-                        traceId, rewardRequest.getViewerId(), latency);
+                ViewerRewardClientResponse data = response.getData();
+                String status = data != null ? data.getSettleStatus() : null;
+                if ("SETTLED".equalsIgnoreCase(status)) {
+                    metrics.recordSettled(latency, epochSecond);
+                } else if ("DUPLICATE".equalsIgnoreCase(status)) {
+                    metrics.recordDuplicate(latency, epochSecond);
+                } else {
+                    metrics.recordAccepted(latency, epochSecond);
+                }
+                log.debug("[traceId={}] reward sent viewerId={} latencyMs={} status={}",
+                        traceId, rewardRequest.getViewerId(), latency, status);
             } else if (isBlocked(null, response)) {
                 metrics.recordBlocked(latency, epochSecond, traceId, response != null ? response.getMessage() : "blocked");
             } else {

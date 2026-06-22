@@ -12,18 +12,25 @@ class SimulationMetricsCollectorTest {
         long second = 1_700_000_000L;
 
         collector.recordRequested();
-        collector.recordSuccess(100, second);
+        collector.recordAccepted(100, second);
+        collector.recordRequested();
+        collector.recordSettled(80, second);
+        collector.recordRequested();
+        collector.recordDuplicate(60, second);
         collector.recordRequested();
         collector.recordFailed(200, second, "sim-test-1", "failed");
 
         var result = collector.buildResult("run-1", "trace-1", 1000L);
 
-        assertEquals(2, result.getRequestedCount());
-        assertEquals(1, result.getSuccessCount());
+        assertEquals(4, result.getRequestedCount());
+        assertEquals(3, result.getSuccessCount());
+        assertEquals(1, result.getAcceptedCount());
+        assertEquals(1, result.getSettledCount());
+        assertEquals(1, result.getDuplicateCount());
         assertEquals(1, result.getFailedCount());
-        assertEquals(0.5, result.getSuccessRate());
-        assertEquals(0.5, result.getErrorRatio());
-        assertEquals(150L, result.getAvgLatencyMs());
-        assertEquals(2.0, result.getActualQps());
+        assertEquals(0.75, result.getSuccessRate());
+        assertEquals(0.25, result.getErrorRatio());
+        assertEquals(110L, result.getAvgLatencyMs());
+        assertEquals(4.0, result.getActualQps());
     }
 }

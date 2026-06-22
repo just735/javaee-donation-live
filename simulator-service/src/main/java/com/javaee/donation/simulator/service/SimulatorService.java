@@ -46,7 +46,6 @@ public class SimulatorService {
         request.setStepDurationSeconds(5);
         request.setFailureRate(0.0);
         request.setTimeoutRate(0.0);
-        request.setStreamerId("streamer-1");
         return request;
     }
 

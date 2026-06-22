@@ -178,8 +178,14 @@ public class BalanceReconciliationService {
 
         for (RewardEvent event : events) {
             BigDecimal amount = safe(event.getRewardAmount());
-            BigDecimal rate = resolveRate(streamerId, event.getRewardTime());
-            BigDecimal commission = amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal commission = safe(event.getCommissionAmount());
+            if (commission.compareTo(BigDecimal.ZERO) == 0 && event.getCommissionRate() != null) {
+                commission = amount.multiply(event.getCommissionRate()).setScale(2, RoundingMode.HALF_UP);
+            }
+            if (commission.compareTo(BigDecimal.ZERO) == 0) {
+                BigDecimal rate = resolveRate(streamerId, event.getRewardTime());
+                commission = amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+            }
             totalReward = totalReward.add(amount);
             totalCommission = totalCommission.add(commission);
         }

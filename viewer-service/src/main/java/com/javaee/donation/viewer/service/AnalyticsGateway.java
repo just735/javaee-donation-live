@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
 public class AnalyticsGateway {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyticsGateway.class);
-    private static final long PROFILE_TIMEOUT_SECONDS = 2L;
+    private static final long ANALYTICS_TIMEOUT_SECONDS = 2L;
 
     private final AnalyticsClient analyticsClient;
     private final ViewerFallbackService fallbackService;
@@ -40,7 +40,7 @@ public class AnalyticsGateway {
                 traceId, ViewerConstants.SERVICE_NAME, viewerId);
         try {
             return CompletableFuture.supplyAsync(() -> fetchProfile(viewerId), asyncExecutor)
-                    .orTimeout(PROFILE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .orTimeout(ANALYTICS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     .get();
         } catch (Exception exception) {
             Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
@@ -61,8 +61,20 @@ public class AnalyticsGateway {
         String traceId = TraceContext.getTraceId();
         log.info("[{}][{}] call analytics top viewers, streamerId={}, limit={}",
                 traceId, ViewerConstants.SERVICE_NAME, streamerId, limit);
-        List<TopViewerResponse> viewers = fetchTopViewers(streamerId, limit);
-        return new TopViewersFetchResult(viewers, false, null);
+        try {
+            List<TopViewerResponse> viewers = CompletableFuture
+                    .supplyAsync(() -> fetchTopViewers(streamerId, limit), asyncExecutor)
+                    .orTimeout(ANALYTICS_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .get();
+            return new TopViewersFetchResult(viewers, false, null);
+        } catch (Exception exception) {
+            Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+            if (cause instanceof TimeoutException) {
+                log.warn("[{}][{}] top viewers query timeout, streamerId={}",
+                        traceId, ViewerConstants.SERVICE_NAME, streamerId);
+            }
+            return getTopViewersFallback(streamerId, limit, cause);
+        }
     }
 
     public TopViewersFetchResult getTopViewersFallback(String streamerId, Integer limit, Throwable cause) {

@@ -30,6 +30,9 @@ public class SimulationReportGenerator {
         report.append("|------|----|\n");
         report.append("| 请求总数 | ").append(result.getRequestedCount()).append(" |\n");
         report.append("| 成功数 | ").append(result.getSuccessCount()).append(" |\n");
+        report.append("| 已受理数(ACCEPTED) | ").append(result.getAcceptedCount()).append(" |\n");
+        report.append("| 已结算数(SETTLED) | ").append(result.getSettledCount()).append(" |\n");
+        report.append("| 幂等重复数(DUPLICATE) | ").append(result.getDuplicateCount()).append(" |\n");
         report.append("| 失败数 | ").append(result.getFailedCount()).append(" |\n");
         report.append("| 超时数 | ").append(result.getTimeoutCount()).append(" |\n");
         report.append("| 限流数 | ").append(result.getBlockedCount()).append(" |\n");
@@ -59,7 +62,11 @@ public class SimulationReportGenerator {
             report.append("- 实际 QPS 低于目标，可增大 `simulator.thread-pool-size` 或检查 Feign 连接池。\n");
         }
         if (result.getBlockedCount() != null && result.getBlockedCount() > 0) {
-            report.append("- 存在下游限流，请协调 viewer-service 调高 Sentinel 限流后再做全链路验收。\n");
+            report.append("- 存在下游限流，请检查 viewer-service 的 `viewer.reward.qps-limit` 配置后再做全链路验收。\n");
+        }
+        if (result.getAcceptedCount() != null && result.getSettledCount() != null
+                && result.getAcceptedCount() > result.getSettledCount()) {
+            report.append("- 当前更多请求处于已受理未同步结算状态，需结合 viewer 任务表与 finance 落账结果综合验收。\n");
         }
         if (result.getTimeoutCount() != null && result.getTimeoutCount() > 0) {
             report.append("- 存在超时请求，可检查 viewer/finance 服务响应时间或网络状况。\n");

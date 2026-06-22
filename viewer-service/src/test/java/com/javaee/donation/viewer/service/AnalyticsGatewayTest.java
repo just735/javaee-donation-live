@@ -62,4 +62,17 @@ class AnalyticsGatewayTest {
         assertEquals(false, result.isDegraded());
         assertEquals(1, result.getViewers().size());
     }
+
+    @Test
+    void topViewersShouldDegradeOnTimeout() {
+        when(analyticsClient.topViewers("s-slow", 10)).thenAnswer(invocation -> {
+            Thread.sleep(3000);
+            return ApiResponse.success("trace", List.of());
+        });
+
+        TopViewersFetchResult result = analyticsGateway.getTopViewers("s-slow", 10);
+
+        assertEquals(true, result.isDegraded());
+        assertEquals(0, result.getViewers().size());
+    }
 }

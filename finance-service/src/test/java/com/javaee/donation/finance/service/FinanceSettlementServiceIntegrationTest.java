@@ -133,6 +133,9 @@ class FinanceSettlementServiceIntegrationTest {
         assertEquals("S-FLOW", event.getStreamerId());
         assertEquals("SETTLED", event.getSettleStatus());
         assertEquals(new BigDecimal("100.00"), event.getRewardAmount());
+        assertEquals(new BigDecimal("0.3000"), event.getCommissionRate());
+        assertEquals(new BigDecimal("30.00"), event.getCommissionAmount());
+        assertEquals(new BigDecimal("70.00"), event.getWithdrawableAmount());
 
         StreamerBalance bal = balanceMapper.selectOne(
                 new LambdaQueryWrapper<StreamerBalance>().eq(StreamerBalance::getStreamerId, "S-FLOW"));
