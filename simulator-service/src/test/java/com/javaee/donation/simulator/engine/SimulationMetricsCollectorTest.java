@@ -20,7 +20,7 @@ class SimulationMetricsCollectorTest {
         collector.recordRequested();
         collector.recordFailed(200, second, "sim-test-1", "failed");
 
-        var result = collector.buildResult("run-1", "trace-1", 1000L);
+        var result = collector.buildResult("run-1", "trace-1", 1000L, 1000L);
 
         assertEquals(4, result.getRequestedCount());
         assertEquals(3, result.getSuccessCount());
