@@ -6,16 +6,21 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: 20
-      minimum-idle: 5
+      minimum-idle: 0
       idle-timeout: 30000
       connection-timeout: 5000
       max-lifetime: 1800000
+      initialization-fail-timeout: -1
   cloud:
     consul:
       host: 127.0.0.1
       port: 8500
       discovery:
         prefer-ip-address: true
+        instance-id: ${spring.application.name}-${server.port}-${random.value}
+        health-check-path: /actuator/health/readiness
+        health-check-interval: 10s
+        deregister-critical-service-after: 30s
     openfeign:
       client:
         config:
@@ -30,7 +35,7 @@ spring:
             readTimeout: 8000
     sentinel:
       enabled: true
-      eager: true
+      eager: false
 
 server:
   tomcat:

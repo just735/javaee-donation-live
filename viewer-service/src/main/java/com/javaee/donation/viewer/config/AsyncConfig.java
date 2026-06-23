@@ -1,5 +1,6 @@
 package com.javaee.donation.viewer.config;
 
+import com.javaee.donation.common.context.TraceContext;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -21,7 +22,7 @@ public class AsyncConfig {
 
     @Bean(name = "rewardNotifyExecutor")
     public Executor rewardNotifyExecutor() {
-        return new ThreadPoolExecutor(
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 4,
                 4,
                 60L,
@@ -33,6 +34,7 @@ public class AsyncConfig {
                     return thread;
                 },
                 new ThreadPoolExecutor.CallerRunsPolicy());
+        return new TraceAwareExecutor(executor);
     }
 
     @Bean(name = "settlementExecutor")
@@ -40,7 +42,7 @@ public class AsyncConfig {
         AtomicInteger counter = new AtomicInteger();
         int poolSize = properties.getSettlement().getThreadPoolSize();
         int queueCapacity = properties.getSettlement().getQueueCapacity();
-        return new ThreadPoolExecutor(
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 poolSize,
                 poolSize,
                 60L,
@@ -52,5 +54,25 @@ public class AsyncConfig {
                     return thread;
                 },
                 new ThreadPoolExecutor.AbortPolicy());
+        return new TraceAwareExecutor(executor);
+    }
+
+    private static final class TraceAwareExecutor implements Executor, AutoCloseable {
+
+        private final ThreadPoolExecutor delegate;
+
+        private TraceAwareExecutor(ThreadPoolExecutor delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            delegate.execute(TraceContext.wrap(command));
+        }
+
+        @Override
+        public void close() {
+            delegate.shutdown();
+        }
     }
 }

@@ -6,6 +6,10 @@ spring:
       port: 8500
       discovery:
         prefer-ip-address: true
+        instance-id: ${spring.application.name}-${server.port}-${random.value}
+        health-check-path: /actuator/health/readiness
+        health-check-interval: 10s
+        deregister-critical-service-after: 30s
     openfeign:
       httpclient:
         hc5:
@@ -48,9 +52,3 @@ logging:
   level:
     root: INFO
     com.javaee.donation.simulator: INFO
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info

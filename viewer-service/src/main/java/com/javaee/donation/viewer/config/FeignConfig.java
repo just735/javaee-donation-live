@@ -14,9 +14,10 @@ public class FeignConfig {
     @Bean
     public RequestInterceptor traceIdRequestInterceptor() {
         return template -> {
-            String traceId = TraceContext.getTraceId();
+            String traceId = TraceContext.currentOrCreate();
             if (traceId != null && !traceId.isBlank()) {
-                template.header("traceId", traceId);
+                template.header(TraceContext.TRACE_ID_HEADER, traceId);
+                template.header(TraceContext.X_TRACE_ID_HEADER, traceId);
             }
         };
     }
