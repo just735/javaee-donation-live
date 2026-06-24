@@ -55,12 +55,47 @@ public class ViewerRewardService {
                 request.getRewardNo(), request.getViewerId(),
                 request.getStreamerId(), request.getRewardAmount());
 
-        // 异步调用finance入账（不写本地DB，由finance批量处理器统一落库）
+        // 完整版：先持久化入账任务，再异步提交 Finance
+        RewardIngestTask task;
+        try {
+            task = rewardTaskService.createTask(request);
+        } catch (Exception e) {
+            log.warn("[{}][{}] createTask failed (may be duplicate), rewardNo={}, error={}",
+                    traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), e.getMessage());
+            // 任务已存在，直接返回成功（幂等）
+            return ViewerRewardResponse.builder()
+                    .rewardNo(request.getRewardNo())
+                    .settleStatus("ACCEPTED")
+                    .streamerId(request.getStreamerId())
+                    .rewardAmount(request.getRewardAmount())
+                    .message("打赏请求已接收（重复请求）")
+                    .build();
+        }
+
+        // 异步提交 Finance 入账
+        final Long taskId = task.getId();
         final String capturedTraceId = traceId;
         settlementExecutor.execute(() -> {
             try {
                 TraceContext.setTraceId(capturedTraceId);
-                rewardSettlementProcessor.processDirect(request);
+                // 标记任务为处理中
+                if (rewardTaskService.markProcessing(taskId)) {
+                    try {
+                        rewardSettlementProcessor.processDirect(request);
+                        // 标记任务已完成
+                        rewardTaskService.markSettled(taskId, ViewerConstants.TASK_STATUS_SETTLED);
+                        log.info("[{}][{}] settlement completed, taskId={}, rewardNo={}",
+                                capturedTraceId, ViewerConstants.SERVICE_NAME, taskId, request.getRewardNo());
+                    } catch (Exception settleEx) {
+                        // 标记任务为重试状态
+                        rewardTaskService.markRetry(taskId, settleEx.getMessage());
+                        log.error("[{}][{}] settlement failed, taskId={}, rewardNo={}, error={}",
+                                capturedTraceId, ViewerConstants.SERVICE_NAME, taskId, request.getRewardNo(), settleEx);
+                    }
+                } else {
+                    log.warn("[{}][{}] markProcessing failed (may be already processed), taskId={}",
+                            capturedTraceId, ViewerConstants.SERVICE_NAME, taskId);
+                }
             } catch (Exception e) {
                 log.error("[{}][{}] async settle failed, rewardNo={}", capturedTraceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), e);
             } finally {
