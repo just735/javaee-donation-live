@@ -18,6 +18,7 @@ import com.javaee.donation.common.model.TopViewerResponse;
 import com.javaee.donation.common.model.ViewerProfileResponse;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -267,10 +268,21 @@ public class AnalyticsService {
         if (value == null || value.isBlank()) {
             throw new AnalyticsBusinessException("INVALID_" + fieldName.toUpperCase(), fieldName + "不能为空");
         }
+        // 支持两种格式：ISO时间(2026-06-18T20:00) 或 纯小时数字(18)
+        try {
+            // 先尝试解析为纯小时数字（0-23）
+            int hour = Integer.parseInt(value.trim());
+            if (hour >= 0 && hour <= 23) {
+                return LocalDate.now().atTime(hour, 0);
+            }
+            throw new AnalyticsBusinessException("INVALID_" + fieldName.toUpperCase(), fieldName + "必须在0-23之间");
+        } catch (NumberFormatException ignored) {
+            // 不是数字，尝试 ISO-8601 时间格式
+        }
         try {
             return LocalDateTime.parse(value).truncatedTo(ChronoUnit.HOURS);
         } catch (Exception exception) {
-            throw new AnalyticsBusinessException("INVALID_" + fieldName.toUpperCase(), fieldName + "格式错误，要求ISO-8601时间格式");
+            throw new AnalyticsBusinessException("INVALID_" + fieldName.toUpperCase(), fieldName + "格式错误，要求小时数字(0-23)或ISO-8601时间格式");
         }
     }
 

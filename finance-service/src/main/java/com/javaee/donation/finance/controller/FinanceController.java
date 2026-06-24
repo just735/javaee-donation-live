@@ -71,17 +71,21 @@ public class FinanceController {
                                                    @RequestBody Map<String, BigDecimal> body) {
         BigDecimal amount = body.get("amount");
         StreamerBalanceResponse before = financeSettlementService.getBalance(streamerId);
-        StreamerBalanceResponse after = financeSettlementService.deductBalance(streamerId, amount);
+        try {
+            StreamerBalanceResponse after = financeSettlementService.deductBalance(streamerId, amount);
 
-        WithdrawResponse resp = WithdrawResponse.builder()
-                .streamerId(streamerId)
-                .withdrawAmount(amount)
-                .beforeBalance(before.getWithdrawableAmount())
-                .afterBalance(after.getWithdrawableAmount())
-                .withdrawnAt(LocalDateTime.now())
-                .status("SUCCESS")
-                .build();
-        return ApiResponse.success(TraceContext.getTraceId(), resp);
+            WithdrawResponse resp = WithdrawResponse.builder()
+                    .streamerId(streamerId)
+                    .withdrawAmount(amount)
+                    .beforeBalance(before.getWithdrawableAmount())
+                    .afterBalance(after.getWithdrawableAmount())
+                    .withdrawnAt(LocalDateTime.now())
+                    .status("SUCCESS")
+                    .build();
+            return ApiResponse.success(TraceContext.getTraceId(), resp);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail(TraceContext.getTraceId(), "INSUFFICIENT_BALANCE", e.getMessage());
+        }
     }
 
     /**

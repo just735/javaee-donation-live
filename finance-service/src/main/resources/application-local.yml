@@ -5,12 +5,12 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     hikari:
-      maximum-pool-size: 20
-      minimum-idle: 0
+      maximum-pool-size: 100
+      minimum-idle: 10
       idle-timeout: 30000
-      connection-timeout: 5000
+      connection-timeout: 10000
       max-lifetime: 1800000
-      leak-detection-threshold: 10000
+      leak-detection-threshold: 30000
       initialization-fail-timeout: -1
   cloud:
     consul:

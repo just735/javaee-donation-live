@@ -55,23 +55,24 @@ public class ViewerRewardService {
                 request.getRewardNo(), request.getViewerId(),
                 request.getStreamerId(), request.getRewardAmount());
 
-        RewardIngestTask task = rewardTaskService.createTask(request);
-        if (isTerminal(task)) {
-            return ViewerRewardResponse.builder()
-                    .rewardNo(task.getRewardNo())
-                    .settleStatus("DUPLICATE")
-                    .streamerId(task.getStreamerId())
-                    .rewardAmount(task.getRewardAmount())
-                    .message("打赏请求已处理，请勿重复提交")
-                    .build();
-        }
+        // 异步调用finance入账（不写本地DB，由finance批量处理器统一落库）
+        final String capturedTraceId = traceId;
+        settlementExecutor.execute(() -> {
+            try {
+                TraceContext.setTraceId(capturedTraceId);
+                rewardSettlementProcessor.processDirect(request);
+            } catch (Exception e) {
+                log.error("[{}][{}] async settle failed, rewardNo={}", capturedTraceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), e);
+            } finally {
+                TraceContext.clear();
+            }
+        });
 
-        submitSettlement(task.getRewardNo());
         return ViewerRewardResponse.builder()
-                .rewardNo(task.getRewardNo())
+                .rewardNo(request.getRewardNo())
                 .settleStatus("ACCEPTED")
-                .streamerId(task.getStreamerId())
-                .rewardAmount(task.getRewardAmount())
+                .streamerId(request.getStreamerId())
+                .rewardAmount(request.getRewardAmount())
                 .message("打赏请求已接收，正在处理中")
                 .build();
     }

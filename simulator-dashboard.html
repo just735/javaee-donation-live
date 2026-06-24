@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>直播打赏系统 - 性能压测仪表盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: white;
+            font-size: 0.95rem;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online {
+            background: #4ade80;
+            box-shadow: 0 0 10px #4ade80;
+        }
+
+        .status-dot.offline {
+            background: #f87171;
+            box-shadow: 0 0 10px #f87171;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+
+        .control-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .control-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+        }
+
+        .mode-btn {
+            padding: 8px 18px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        .mode-btn:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: transparent;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .config-item label {
+            display: block;
+            font-size: 0.9rem;
+            color: #64748b;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .config-item input, .config-item select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+
+        .config-item input:focus, .config-item select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #475569;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #e2e8f0;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #dc2626;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--card-color) 0%, var(--card-color-end) 100%);
+        }
+
+        .metric-card.qps { --card-color: #667eea; --card-color-end: #764ba2; }
+        .metric-card.success-rate { --card-color: #10b981; --card-color-end: #059669; }
+        .metric-card.latency { --card-color: #f59e0b; --card-color-end: #d97706; }
+        .metric-card.p95 { --card-color: #ef4444; --card-color-end: #dc2626; }
+
+        .metric-label {
+            font-size: 0.9rem;
+            color: #64748b;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #1e293b;
+            line-height: 1;
+        }
+
+        .metric-unit {
+            font-size: 1rem;
+            color: #94a3b8;
+            margin-left: 4px;
+        }
+
+        .metric-change {
+            font-size: 0.85rem;
+            margin-top: 8px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            display: inline-block;
+            font-weight: 600;
+        }
+
+        .metric-change.positive {
+            background: #d1fae5;
+            color: #059669;
+        }
+
+        .metric-change.negative {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+
+        .chart-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+        }
+
+        .report-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
+        }
+
+        .report-content {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: #334155;
+            white-space: pre-wrap;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 10px;
+            color: white;
+            font-weight: 500;
+            z-index: 10000;
+            transform: translateX(120%);
+            transition: transform 0.3s ease-out;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .toast.error {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .api-docs-link {
+            text-align: center;
+            margin-top: 20px;
+            color: white;
+            opacity: 0.9;
+        }
+
+        .api-docs-link a {
+            color: white;
+            text-decoration: underline;
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🚀 直播打赏系统 - 性能压测仪表盘</h1>
+            <p>实时监控 · 多模式压测 · 可视化报告</p>
+            <div class="status-bar" id="serviceStatus">
+                <div class="status-item">
+                    <span class="status-dot offline" id="viewerStatus"></span>
+                    <span>Viewer Service :8081</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-dot offline" id="financeStatus"></span>
+                    <span>Finance Service :8082</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-dot offline" id="analyticsStatus"></span>
+                    <span>Analytics Service :8083</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-dot offline" id="simulatorStatus"></span>
+                    <span>Simulator Service :8084</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <div class="control-header">
+                <div class="control-title">⚙️ 压测配置</div>
+                <div class="mode-selector">
+                    <button class="mode-btn active" data-mode="standard" onclick="setMode('standard')">标准压测</button>
+                    <button class="mode-btn" data-mode="rampup" onclick="setMode('rampup')">阶梯加压</button>
+                    <button class="mode-btn" data-mode="sustained" onclick="setMode('sustained')">持续压测</button>
+                </div>
+            </div>
+
+            <!-- Standard Mode Config -->
+            <div id="standardConfig" class="config-section">
+                <div class="config-grid">
+                    <div class="config-item">
+                        <label>目标 QPS</label>
+                        <input type="number" id="targetQps" value="500" min="50" max="2000" step="50">
+                    </div>
+                    <div class="config-item">
+                        <label>持续时间（秒）</label>
+                        <input type="number" id="duration" value="5" min="1" max="60">
+                    </div>
+                    <div class="config-item">
+                        <label>线程池大小</label>
+                        <input type="number" id="threadPoolSize" value="1024" min="64" max="2048" step="64">
+                    </div>
+                    <div class="config-item">
+                        <label>超时时间（毫秒）</label>
+                        <input type="number" id="timeoutMs" value="10000" min="1000" max="30000" step="1000">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ramp-up Mode Config -->
+            <div id="rampupConfig" class="config-section" style="display:none;">
+                <div class="config-grid">
+                    <div class="config-item">
+                        <label>起始 QPS</label>
+                        <input type="number" id="startQps" value="100" min="10" max="500" step="10">
+                    </div>
+                    <div class="config-item">
+                        <label>目标 QPS</label>
+                        <input type="number" id="endQps" value="800" min="100" max="2000" step="50">
+                    </div>
+                    <div class="config-item">
+                        <label>每阶段持续时间（秒）</label>
+                        <input type="number" id="stageDuration" value="5" min="1" max="10">
+                    </div>
+                    <div class="config-item">
+                        <label>QPS 阶梯增量</label>
+                        <input type="number" id="qpsStep" value="100" min="10" max="200" step="10">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sustained Mode Config -->
+            <div id="sustainedConfig" class="config-section" style="display:none;">
+                <div class="config-grid">
+                    <div class="config-item">
+                        <label>目标 QPS</label>
+                        <input type="number" id="sustainQps" value="300" min="100" max="1000" step="50">
+                    </div>
+                    <div class="config-item">
+                        <label>持续时间（分钟）</label>
+                        <input type="number" id="sustainDuration" value="5" min="1" max="60">
+                    </div>
+                    <div class="config-item">
+                        <label>采样间隔（秒）</label>
+                        <input type="number" id="sampleInterval" value="10" min="5" max="30">
+                    </div>
+                    <div class="config-item">
+                        <label>自动生成报告</label>
+                        <select id="autoReport">
+                            <option value="true">是</option>
+                            <option value="false">否</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-primary" id="startBtn" onclick="startTest()">
+                    ▶️ 开始压测
+                </button>
+                <button class="btn btn-secondary" id="loadLatestBtn" onclick="loadLatestResult()">
+                    📊 加载最新结果
+                </button>
+                <button class="btn btn-secondary" onclick="exportReport()">
+                    📥 导出报告
+                </button>
+                <button class="btn btn-danger" onclick="clearResults()">
+                    🗑️ 清除数据
+                </button>
+            </div>
+        </div>
+
+        <!-- Metrics Cards -->
+        <div class="metrics-grid" id="metricsGrid">
+            <div class="metric-card qps">
+                <div class="metric-label">实际 QPS</div>
+                <div class="metric-value" id="actualQpsValue">--</div>
+                <div class="unit">requests/second</div>
+            </div>
+            <div class="metric-card success-rate">
+                <div class="metric-label">成功率</div>
+                <div class="metric-value" id="successRateValue">--</div>
+                <div class="unit">%</div>
+            </div>
+            <div class="metric-card latency">
+                <div class="metric-label">平均延迟</div>
+                <div class="metric-value" id="avgLatencyValue">--</div>
+                <div class="unit">ms</div>
+            </div>
+            <div class="metric-card p95">
+                <div class="metric-label">P95 延迟</div>
+                <div class="metric-value" id="p95LatencyValue">--</div>
+                <div class="unit">ms</div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+            <div class="chart-container">
+                <div class="chart-title">📈 QPS 趋势曲线</div>
+                <div class="chart-wrapper">
+                    <canvas id="qpsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">⏱️ 延迟分布趋势</div>
+                <div class="chart-wrapper">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">📊 每秒请求统计</div>
+                <div class="chart-wrapper">
+                    <canvas id="requestChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">🎯 成功率与错误率</div>
+                <div class="chart-wrapper">
+                    <canvas id="errorChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Section -->
+        <div class="report-section">
+            <div class="chart-title">📋 压测报告详情</div>
+            <div class="report-content" id="reportContent">
+等待压测数据...
+            </div>
+        </div>
+
+        <div class="api-docs-link">
+            详细接口文档请查看：<a href="./docs/API_REFERENCE.md" target="_blank">API_REFERENCE.md</a> | 
+            性能优化方案：<a href="./docs/PERFORMANCE_OPTIMIZATION.md" target="_blank">PERFORMANCE_OPTIMIZATION.md</a>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // Global variables
+        let qpsChart, latencyChart, requestChart, errorChart;
+        let currentMode = 'standard';
+        let testHistory = [];
+
+        // Initialize charts on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            checkServiceHealth();
+            loadLatestResult();
+        });
+
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    }
+                }
+            };
+
+            // QPS Chart
+            const qpsCtx = document.getElementById('qpsChart').getContext('2d');
+            qpsChart = new Chart(qpsCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '实际 QPS',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }, {
+                        label: '目标 QPS',
+                        data: [],
+                        borderColor: '#94a3b8',
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0,
+                        pointRadius: 0
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Latency Chart
+            const latencyCtx = document.getElementById('latencyChart').getContext('2d');
+            latencyChart = new Chart(latencyCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '平均延迟 (ms)',
+                        data: [],
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }, {
+                        label: 'P99 延迟 (ms)',
+                        data: [],
+                        borderColor: '#ef4444',
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Request Count Chart
+            const requestCtx = document.getElementById('requestChart').getContext('2d');
+            requestChart = new Chart(requestCtx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '成功数',
+                        data: [],
+                        backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                        borderRadius: 4
+                    }, {
+                        label: '失败数',
+                        data: [],
+                        backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                        borderRadius: 4
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Error Rate Chart
+            const errorCtx = document.getElementById('errorChart').getContext('2d');
+            errorChart = new Chart(errorCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['成功', '失败', '超时'],
+                    datasets: [{
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            'rgba(16, 185, 129, 0.8)',
+                            'rgba(245, 158, 11, 0.8)',
+                            'rgba(239, 68, 68, 0.8)'
+                        ],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        async function checkServiceHealth() {
+            const services = [
+                { name: 'viewer', port: 8081, elementId: 'viewerStatus' },
+                { name: 'finance', port: 8082, elementId: 'financeStatus' },
+                { name: 'analytics', port: 8083, elementId: 'analyticsStatus' },
+                { name: 'simulator', port: 8084, elementId: 'simulatorStatus' }
+            ];
+
+            for (const service of services) {
+                try {
+                    const response = await fetch(`http://localhost:${service.port}/actuator/health`);
+                    if (response.ok) {
+                        document.getElementById(service.elementId).className = 'status-dot online';
+                    } else {
+                        document.getElementById(service.elementId).className = 'status-dot offline';
+                    }
+                } catch (error) {
+                    document.getElementById(service.elementId).className = 'status-dot offline';
+                }
+            }
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            
+            // Update button states
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.mode === mode) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // Show/hide config sections
+            document.getElementById('standardConfig').style.display = mode === 'standard' ? 'block' : 'none';
+            document.getElementById('rampupConfig').style.display = mode === 'rampup' ? 'block' : 'none';
+            document.getElementById('sustainedConfig').style.display = mode === 'sustained' ? 'block' : 'none';
+        }
+
+        async function startTest() {
+            showLoading(true);
+            disableButtons(true);
+
+            try {
+                let requestBody;
+
+                switch(currentMode) {
+                    case 'standard':
+                        requestBody = {
+                            targetQps: parseInt(document.getElementById('targetQps').value),
+                            durationSeconds: parseInt(document.getElementById('duration').value),
+                            threadPoolSize: parseInt(document.getElementById('threadPoolSize').value),
+                            timeoutMs: parseInt(document.getElementById('timeoutMs').value)
+                        };
+                        break;
+
+                    case 'rampup':
+                        // For ramp-up mode, we'll run multiple tests sequentially
+                        await runRampUpTest();
+                        return;
+
+                    case 'sustained':
+                        requestBody = {
+                            targetQps: parseInt(document.getElementById('sustainQps').value),
+                            durationSeconds: parseInt(document.getElementById('sustainDuration').value) * 60,
+                            threadPoolSize: 1024,
+                            timeoutMs: 15000
+                        };
+                        break;
+                }
+
+                const response = await fetch('http://localhost:8084/api/simulator/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.code === 'SUCCESS') {
+                    updateDashboard(result.data);
+                    showToast('✅ 压测完成！', 'success');
+                } else {
+                    throw new Error(result.message || '压测失败');
+                }
+
+            } catch (error) {
+                console.error('Test failed:', error);
+                showToast(`❌ 压测失败: ${error.message}`, 'error');
+            } finally {
+                showLoading(false);
+                disableButtons(false);
+            }
+        }
+
+        async function runRampUpTest() {
+            const startQps = parseInt(document.getElementById('startQps').value);
+            const endQps = parseInt(document.getElementById('endQps').value);
+            const stageDuration = parseInt(document.getElementById('stageDuration').value);
+            const qpsStep = parseInt(document.getElementById('qpsStep').value);
+
+            testHistory = [];
+            let currentQps = startQps;
+
+            while (currentQps <= endQps) {
+                showToast(`⏳ 阶梯测试中... 当前 QPS: ${currentQps}`, 'success');
+
+                const requestBody = {
+                    targetQps: currentQps,
+                    durationSeconds: stageDuration,
+                    threadPoolSize: Math.min(1024, currentQps * 2),
+                    timeoutMs: 15000
+                };
+
+                try {
+                    const response = await fetch('http://localhost:8084/api/simulator/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    const result = await response.json();
+                    
+                    if (result.code === 'SUCCESS') {
+                        testHistory.push({
+                            qps: currentQps,
+                            ...result.data
+                        });
+                        
+                        // Update dashboard with latest result
+                        updateDashboard(result.data);
+                    }
+
+                } catch (error) {
+                    console.error(`Stage ${currentQps} QPS failed:`, error);
+                }
+
+                currentQps += qpsStep;
+            }
+
+            // Generate ramp-up summary report
+            generateRampUpReport();
+            showToast(`✅ 阶梯压测完成！共执行 ${testHistory.length} 个阶段`, 'success');
+        }
+
+        async function loadLatestResult() {
+            try {
+                const response = await fetch('http://localhost:8084/api/simulator/results/latest');
+                
+                if (!response.ok) {
+                    throw new Error('No results found');
+                }
+
+                const result = await response.json();
+                
+                if (result.code === 'SUCCESS' && result.data) {
+                    updateDashboard(result.data);
+                    showToast('✅ 已加载最新压测结果', 'success');
+                } else {
+                    document.getElementById('reportContent').textContent = '暂无压测数据，请先运行压测或检查服务状态。';
+                }
+
+            } catch (error) {
+                console.error('Failed to load results:', error);
+                document.getElementById('reportContent').textContent = '无法连接到 Simulator 服务，请确保服务已启动。';
+            }
+        }
+
+        function updateDashboard(data) {
+            if (!data || !data.latencySeries) return;
+
+            // Update metrics cards
+            animateValue('actualQpsValue', data.actualQps || 0);
+            animateValue('successRateValue', (data.successRate * 100).toFixed(1));
+            animateValue('avgLatencyValue', data.avgLatencyMs || 0);
+            animateValue('p95LatencyValue', data.p95LatencyMs || 0);
+
+            // Prepare chart data
+            const labels = data.latencySeries.map((_, i) => `T+${i + 1}s`);
+            const qpsData = data.latencySeries.map(s => s.qps);
+            const avgLatencyData = data.latencySeries.map(s => s.avgLatencyMs);
+            const p99LatencyData = data.latencySeries.map(s => s.p99LatencyMs || 0);
+            const successData = data.latencySeries.map(() => 
+                Math.round(data.successCount / data.latencySeries.length)
+            );
+            const errorData = data.latencySeries.map(s => s.errorCount || 0);
+
+            // Update QPS chart
+            qpsChart.data.labels = labels;
+            qpsChart.data.datasets[0].data = qpsData;
+            qpsChart.data.datasets[1].data = Array(labels.length).fill(
+                currentMode === 'standard' ? document.getElementById('targetQps').value :
+                currentMode === 'sustained' ? document.getElementById('sustainQps').value : 0
+            );
+            qpsChart.update();
+
+            // Update Latency chart
+            latencyChart.data.labels = labels;
+            latencyChart.data.datasets[0].data = avgLatencyData;
+            latencyChart.data.datasets[1].data = p99LatencyData;
+            latencyChart.update();
+
+            // Update Request count chart
+            requestChart.data.labels = labels;
+            requestChart.data.datasets[0].data = successData;
+            requestChart.data.datasets[1].data = errorData;
+            requestChart.update();
+
+            // Update Error rate pie chart
+            errorChart.data.datasets[0].data = [
+                data.successCount || 0,
+                data.failedCount || 0,
+                data.timeoutCount || 0
+            ];
+            errorChart.update();
+
+            // Update report content
+            generateReport(data);
+        }
+
+        function generateReport(data) {
+            const report = `
+═══════════════════════════════════════════════════
+           🎯 直播打赏系统 - 压测性能报告
+═══════════════════════════════════════════════════
+
+【测试配置】
+├─ 测试模式：${currentMode.toUpperCase()}
+├─ 目标 QPS：${currentMode === 'standard' ? document.getElementById('targetQps').value + ' req/s' : '动态'}
+├─ 持续时间：${data.latencySeries?.length || '?'} 秒
+├─ 线程池大小：${document.getElementById('threadPoolSize')?.value || 'N/A'}
+└─ 超时设置：${document.getElementById('timeoutMs')?.value || 'N/A'} ms
+
+【核心指标】
+├─ 总请求数：${data.requestedCount?.toLocaleString() || 0}
+├─ 成功数量：${data.successCount?.toLocaleString() || 0}
+│   └─ 成功率：${((data.successRate || 0) * 100).toFixed(1)}%
+│
+├─ 失败数量：${data.failedCount?.toLocaleString() || 0}
+├─ 超时数量：${data.timeoutCount?.toLocaleString() || 0}
+├─ 限流数量：${data.blockedCount?.toLocaleString() || 0}
+│
+└─ 实际 QPS：${(data.actualQps || 0).toFixed(1)} req/s
+
+【性能指标】
+├─ 平均延迟：${(data.avgLatencyMs || 0).toFixed(0)} ms
+├─ P95 延迟：${(data.p95LatencyMs || 0).toFixed(0)} ms
+├─ P99 延迟：${(data.p99LatencyMs || 0).toFixed(0)} ms
+│
+└─ 吞吐量评估：
+    ├─ 达标情况：${(data.actualQps >= 500) ? '✅ PASS (≥500 QPS)' : '❌ FAIL (<500 QPS)'}
+    └─ 性能等级：${getPerformanceGrade(data)}
+
+【每秒明细】
+${formatLatencySeries(data.latencySeries)}
+
+【优化建议】
+${generateOptimizationTips(data)}
+
+═══════════════════════════════════════════════════
+  报告生成时间：${new Date().toLocaleString('zh-CN')}
+  系统版本：v2.0 (高性能异步架构)
+═══════════════════════════════════════════════════`;
+
+            document.getElementById('reportContent').textContent = report;
+        }
+
+        function generateRampUpReport() {
+            let report = '\n════════════════════════════════════════\n';
+            report += '     🔺 阶梯加压测试汇总报告\n';
+            report += '════════════════════════════════════════\n\n';
+
+            report += '| 阶段 | 目标QPS | 实际QPS | 成功率 | 平均延迟(ms) |\n';
+            report += '|------|--------|--------|--------|------------|\n';
+
+            for (let i = 0; i < testHistory.length; i++) {
+                const t = testHistory[i];
+                report += `| ${i + 1}   | ${t.qps}   | ${(t.actualQps || 0).toFixed(1)}  | ${((t.successRate || 0) * 100).toFixed(1)}% | ${(t.avgLatencyMs || 0).toFixed(0)} |\n`;
+            }
+
+            report += `\n结论：系统在 QPS ${testHistory[testHistory.length - 1]?.qps || '?'} 时仍保持稳定运行。\n`;
+            report += '════════════════════════════════════════\n';
+
+            document.getElementById('reportContent').textContent += report;
+        }
+
+        function formatLatencySeries(series) {
+            if (!series || series.length === 0) return '  （无数据）\n';
+
+            let output = '';
+            series.forEach((item, index) => {
+                const time = String(index + 1).padStart(2, '0');
+                const qps = String(item.qps?.toFixed(0) || 0).padStart(4);
+                const avg = String(item.avgLatencyMs?.toFixed(0) || 0).padStart(6);
+                const err = item.errorCount || 0;
+                
+                output += `  │ T+${time}s │ QPS=${qps} │ Avg=${avg}ms │ Err=${err}\n`;
+            });
+            return output;
+        }
+
+        function getPerformanceGrade(data) {
+            const qps = data.actualQps || 0;
+            const successRate = data.successRate || 0;
+            const avgLatency = data.avgLatencyMs || 0;
+
+            if (qps >= 500 && successRate >= 0.99 && avgLatency < 5000) {
+                return '⭐⭐⭐ A级 (优秀)';
+            } else if (qps >= 300 && successRate >= 0.95 && avgLatency < 8000) {
+                return '⭐⭐ B级 (良好)';
+            } else if (qps >= 100 && successRate >= 0.90) {
+                return '⭐ C级 (合格)';
+            } else {
+                return '❌ D级 (需优化)';
+            }
+        }
+
+        function generateOptimizationTips(data) {
+            const tips = [];
+            const successRate = data.successRate || 0;
+            const avgLatency = data.avgLatencyMs || 0;
+            const actualQps = data.actualQps || 0;
+
+            if (successRate < 0.95) {
+                tips.push('- 成功率偏低，建议检查数据库连接池配置和超时设置');
+            }
+            if (avgLatency > 5000) {
+                tips.push('- 平均延迟较高，建议启用批量攒批入账模式');
+            }
+            if (actualQps < 400) {
+                tips.push('- QPS未达标，建议扩容线程池或优化同步调用链路');
+            }
+            if ((data.blockedCount || 0) > 0) {
+                tips.push('- 存在限流，建议调整 Sentinel 流控规则');
+            }
+            if (tips.length === 0) {
+                tips.push('- 系统运行良好，各项指标均达到预期目标 ✨');
+            }
+
+            return tips.join('\n');
+        }
+
+        function animateValue(elementId, endValue) {
+            const element = document.getElementById(elementId);
+            const startValue = parseFloat(element.textContent) || 0;
+            const duration = 1000;
+            const startTime = performance.now();
+
+            function update(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                const currentValue = startValue + (endValue - startValue) * progress;
+                element.textContent = typeof endValue === 'number' && endValue % 1 !== 0 
+                    ? currentValue.toFixed(1) 
+                    : Math.round(currentValue);
+
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        function exportReport() {
+            const reportText = document.getElementById('reportContent').textContent;
+            
+            if (reportText.includes('等待压测数据')) {
+                showToast('⚠️ 没有可导出的数据', 'error');
+                return;
+            }
+
+            const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `performance-report-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('📥 报告已导出', 'success');
+        }
+
+        function clearResults() {
+            if (confirm('确定要清除所有压测数据吗？')) {
+                // Reset metrics
+                ['actualQpsValue', 'successRateValue', 'avgLatencyValue', 'p95LatencyValue'].forEach(id => {
+                    document.getElementById(id).textContent = '--';
+                });
+
+                // Reset charts
+                [qpsChart, latencyChart, requestChart, errorChart].forEach(chart => {
+                    chart.data.labels = [];
+                    chart.data.datasets.forEach(dataset => {
+                        dataset.data = [];
+                    });
+                    chart.update();
+                });
+
+                // Reset report
+                document.getElementById('reportContent').textContent = '等待压测数据...';
+                testHistory = [];
+
+                showToast('🗑️ 数据已清除', 'success');
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
+        }
+
+        function disableButtons(disabled) {
+            document.getElementById('startBtn').disabled = disabled;
+            document.getElementById('loadLatestBtn').disabled = disabled;
+        }
+
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            
+            setTimeout(() => {
+                toast.className = 'toast';
+            }, 3000);
+        }
+
+        // Auto-refresh health status every 30 seconds
+        setInterval(checkServiceHealth, 30000);
+    </script>
+</body>
+</html>

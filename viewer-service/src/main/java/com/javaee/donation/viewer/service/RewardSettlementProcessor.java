@@ -43,25 +43,7 @@ public class RewardSettlementProcessor {
         TraceContext.setTraceId(task.getTraceId());
         try {
             RewardRequest request = toRequest(task);
-            ApiResponse<ViewerRewardResponse> response = financeGateway.settle(request);
-            if (response == null || !response.isSuccess() || response.getData() == null) {
-                String message = response != null ? response.getMessage() : "finance unavailable";
-                rewardTaskService.markRetry(task.getId(), message);
-                log.warn("[{}][{}] settlement deferred, rewardNo={}, message={}",
-                        task.getTraceId(), ViewerConstants.SERVICE_NAME, task.getRewardNo(), message);
-                return;
-            }
-
-            ViewerRewardResponse settled = response.getData();
-            String finalStatus = ViewerConstants.TASK_STATUS_DUPLICATE;
-            if (!"DUPLICATE".equalsIgnoreCase(settled.getSettleStatus())) {
-                finalStatus = ViewerConstants.TASK_STATUS_SETTLED;
-            }
-            rewardTaskService.markSettled(task.getId(), finalStatus);
-            settled.setMessage("打赏成功");
-            rewardNotificationService.notifyAsync(task.getTraceId(), settled);
-            log.info("[{}][{}] settlement completed, rewardNo={}, status={}",
-                    task.getTraceId(), ViewerConstants.SERVICE_NAME, task.getRewardNo(), finalStatus);
+            doSettle(task.getTraceId(), task.getRewardNo(), request);
         } catch (Exception exception) {
             rewardTaskService.markRetry(task.getId(), exception.getMessage());
             log.error("[{}][{}] settlement error, rewardNo={}, error={}",
@@ -69,6 +51,33 @@ public class RewardSettlementProcessor {
         } finally {
             TraceContext.clear();
         }
+    }
+
+    /**
+     * 直接入账（不经过任务表，用于高性能场景）
+     */
+    public void processDirect(RewardRequest request) {
+        String traceId = TraceContext.getTraceId();
+        try {
+            doSettle(traceId, request.getRewardNo(), request);
+        } catch (Exception e) {
+            log.error("[{}][{}] direct settle failed, rewardNo={}", traceId, ViewerConstants.SERVICE_NAME, request.getRewardNo(), e);
+        }
+    }
+
+    private void doSettle(String traceId, String rewardNo, RewardRequest request) {
+        ApiResponse<ViewerRewardResponse> response = financeGateway.settle(request);
+        if (response == null || !response.isSuccess() || response.getData() == null) {
+            String message = response != null ? response.getMessage() : "finance unavailable";
+            log.warn("[{}][{}] settlement deferred, rewardNo={}, message={}",
+                    traceId, ViewerConstants.SERVICE_NAME, rewardNo, message);
+            return;
+        }
+        ViewerRewardResponse settled = response.getData();
+        settled.setMessage("打赏成功");
+        rewardNotificationService.notifyAsync(traceId, settled);
+        log.info("[{}][{}] settlement completed, rewardNo={}, status={}",
+                traceId, ViewerConstants.SERVICE_NAME, rewardNo, settled.getSettleStatus());
     }
 
     private RewardRequest toRequest(RewardIngestTask task) {

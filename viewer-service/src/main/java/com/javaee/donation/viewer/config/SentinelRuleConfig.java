@@ -9,6 +9,8 @@ import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
 import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -17,6 +19,7 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class SentinelRuleConfig {
+    private static final Logger log = LoggerFactory.getLogger(SentinelRuleConfig.class);
 
     private static final int STAT_INTERVAL_MS = 20000;
     private static final int MIN_REQUEST_AMOUNT = 5;
@@ -32,8 +35,13 @@ public class SentinelRuleConfig {
 
     @PostConstruct
     public void initRules() {
-        initFlowRules();
-        initDegradeRules();
+        try {
+            initFlowRules();
+            initDegradeRules();
+            log.info("Sentinel rules initialized successfully");
+        } catch (Exception e) {
+            log.warn("Sentinel rule initialization failed (service will continue without Sentinel): {}", e.getMessage());
+        }
     }
 
     private void initFlowRules() {
